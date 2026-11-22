@@ -5,7 +5,7 @@
 # Copyright (c) 2026 REVYTECH, Inc.
 #
 # cloudbsd/make.sh: the logic behind the fork's Makefile (FORK-NOTES.md).
-# Usage: sh cloudbsd/make.sh <preflight|install-deps|configure|build|test|clean>
+# Usage: see USAGE below.
 # Settings come from MK_* in the environment (the Makefile passes them).
 set -eu
 
@@ -27,6 +27,7 @@ rust rust-bindgen-cli llvm19 libclc-llvm19 spirv-llvm-translator-llvm19 \
 spirv-tools glslang libdrm expat bison vulkan-headers vulkan-loader \
 vulkan-tools"
 TOOLS="git cc meson ninja rustc bindgen python3 pkg-config vulkaninfo"
+USAGE="usage: make.sh <preflight|install-deps|configure|build|test|no-nouveau|clean>"
 
 die() {
 	printf 'make.sh: %s\n' "$*" >&2
@@ -87,29 +88,33 @@ do_install_deps() {
 	fi
 }
 
-mesa_opts="--prefix=$work/prefix
--Dbuildtype=debugoptimized
--Dvulkan-drivers=nvk
--Dgallium-drivers=
--Dplatforms=
--Dglx=disabled
--Degl=disabled
--Dgbm=disabled
--Dopengl=false
--Dgles1=disabled
--Dgles2=disabled
--Dvideo-codecs=
--Dvulkan-layers=
--Dtools=
--Dllvm=enabled
--Dnvk-kmd=nvrm
--Dnvrm-include-dir=$nvrm_src/lib/libnvrm/include
--Dnvrm-lib-dir=$(libnvrm_dir)"
+mesa_opts_run() {
+	set -- "$@" \
+	    "--prefix=$work/prefix" \
+	    "-Dbuildtype=debugoptimized" \
+	    "-Dvulkan-drivers=nvk" \
+	    "-Dgallium-drivers=" \
+	    "-Dplatforms=" \
+	    "-Dglx=disabled" \
+	    "-Degl=disabled" \
+	    "-Dgbm=disabled" \
+	    "-Dopengl=false" \
+	    "-Dgles1=disabled" \
+	    "-Dgles2=disabled" \
+	    "-Dvideo-codecs=" \
+	    "-Dvulkan-layers=" \
+	    "-Dtools=" \
+	    "-Dllvm=enabled" \
+	    "-Dnvk-kmd=nvrm" \
+	    "-Dnvrm-include-dir=$nvrm_src/lib/libnvrm/include" \
+	    "-Dnvrm-lib-dir=$(libnvrm_dir)"
+	"$@"
+}
 
 do_configure() {
-	printf '%s\n' "nothing to configure" \
-	    "build options: $mesa_opts" \
-	    "libnvrm from: $nvrm_src/lib/libnvrm" \
+	printf '%s\n' "nothing to configure"
+	mesa_opts_run printf '%s\n' "build options:"
+	printf '%s\n' "libnvrm from: $nvrm_src/lib/libnvrm" \
 	    "build directory: $work"
 }
 
@@ -128,9 +133,9 @@ build_libnvrm() {
 
 build_mesa() {
 	if [ ! -f "$(mesa_dir)/build.ninja" ]; then
-		meson setup "$(mesa_dir)" "$top" $mesa_opts
+		mesa_opts_run meson setup "$(mesa_dir)" "$top"
 	fi
-	meson configure "$(mesa_dir)" $mesa_opts
+	mesa_opts_run meson configure "$(mesa_dir)"
 	ninja -C "$(mesa_dir)" -j"$(ncpu)"
 	meson install -C "$(mesa_dir)" --quiet
 }
@@ -176,7 +181,10 @@ check() {
 has() { grep -qF -- "$2" "$1"; }
 lacks() { ! grep -qF -- "$2" "$1"; }
 no_nouveau() {
-	[ "$#" -gt 0 ] || return 2
+	if [ "$#" -eq 0 ]; then
+		printf '%s\n' 'no_nouveau: no file given (usage: make.sh no-nouveau FILE...)' >&2
+		return 2
+	fi
 	matches=$(grep -il nouveau "$@") && status=0 || status=$?
 	case $status in
 	0)
@@ -191,7 +199,7 @@ no_nouveau_returns() {
 	want=$1
 	shift
 	got=0
-	no_nouveau "$@" || got=$?
+	no_nouveau "$@" 2>/dev/null || got=$?
 	[ "$got" -eq "$want" ]
 }
 
@@ -215,7 +223,7 @@ no_nouveau_uapi_deps_returns() {
 	want=$1
 	file=$2
 	got=0
-	no_nouveau_uapi_deps "$file" || got=$?
+	no_nouveau_uapi_deps "$file" 2>/dev/null || got=$?
 	[ "$got" -eq "$want" ]
 }
 
@@ -245,7 +253,7 @@ no_nouveau_ws_targets_returns() {
 	want=$1
 	file=$2
 	got=0
-	no_nouveau_ws_targets "$file" 0 || got=$?
+	no_nouveau_ws_targets "$file" 0 2>/dev/null || got=$?
 	[ "$got" -eq "$want" ]
 }
 
@@ -261,12 +269,35 @@ no_nouveau_uapi() {
 		return 1
 	}
 	no_nouveau_uapi_deps "$uapi_deps" || return $?
+	if ! grep -qE 'libvulkan_nvk_nvrm|libnvk\.a\.p' "$uapi_deps"; then
+		printf 'ninja deps file names no NVK library object (libvulkan_nvk_nvrm or libnvk.a.p): %s\n' "$uapi_deps" >&2
+		return 2
+	fi
+	return 0
+}
+
+no_nouveau_uapi_returns() {
+	want=$1
+	file=$2
+	got=0
+	no_nouveau_uapi "$file" 0 2>/dev/null || got=$?
+	[ "$got" -eq "$want" ]
 }
 
 upstream_copies_match() {
+	if [ -L "$top/UPSTREAM-AGENTS.md" ] || [ ! -f "$top/UPSTREAM-AGENTS.md" ]; then
+		printf '%s\n' 'UPSTREAM-AGENTS.md is missing or not a regular file' >&2
+		return 1
+	fi
 	status=0
 	for file in UPSTREAM-CLAUDE.md UPSTREAM-GEMINI.md; do
-		if ! cmp -s "$top/$file" "$top/UPSTREAM-AGENTS.md"; then
+		if [ -L "$top/$file" ]; then
+			printf '%s\n' "$file is a symbolic link; it must be a regular copy" >&2
+			status=1
+		elif [ ! -f "$top/$file" ]; then
+			printf '%s\n' "$file is missing; copy UPSTREAM-AGENTS.md to it" >&2
+			status=1
+		elif ! cmp -s "$top/$file" "$top/UPSTREAM-AGENTS.md"; then
 			printf '%s\n' "$file differs; copy UPSTREAM-AGENTS.md over it" >&2
 			status=1
 		fi
@@ -281,6 +312,9 @@ do_test() {
 	out=$work/test
 
 	installed_names=$(find "$work/prefix" -iname '*nouveau*' -print) && find_status=0 || find_status=$?
+	if [ "$find_status" -eq 0 ] && [ -n "$installed_names" ]; then
+		printf 'nouveau in installed file names:\n%s\n' "$installed_names" >&2
+	fi
 	check "no installed file name contains nouveau" \
 	    test "$find_status" -eq 0 -a -z "$installed_names"
 	check "installed JSON files contain no nouveau names" \
@@ -299,6 +333,9 @@ do_test() {
 	printf '%s\n' 'src/foo.o: /usr/local/include/libdrm/nouveau/nvif/ioctl.h' >"$out/fixture-nouveau-uapi-nvif-deps.txt"
 	check "nouveau uAPI deps check rejects a planted nvif header" \
 	    no_nouveau_uapi_deps_returns 1 "$out/fixture-nouveau-uapi-nvif-deps.txt"
+	printf '%s\n' 'src/foo.o: include/foo.h' >"$out/fixture-no-nvk-library-deps.txt"
+	check "nouveau uAPI check rejects deps with no NVK library object" \
+	    no_nouveau_uapi_returns 2 "$out/fixture-no-nvk-library-deps.txt"
 	printf '%s\n' 'src/nouveau/winsys/libnouveau_ws.a: STATIC_LINKER' >"$out/fixture-nouveau-winsys-target.txt"
 	check "nouveau winsys build-graph check rejects a planted target" \
 	    no_nouveau_ws_targets_returns 1 "$out/fixture-nouveau-winsys-target.txt"
@@ -399,5 +436,5 @@ build) do_build ;;
 test) do_test ;;
 no-nouveau) no_nouveau "$@" ;;
 clean) do_clean ;;
-*) die "usage: make.sh <preflight|install-deps|configure|build|test|clean>" ;;
+*) die "$USAGE" ;;
 esac

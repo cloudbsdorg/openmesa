@@ -29,9 +29,12 @@ ICD or the program output says "nouveau".
 ## nvk-nvrm-probe
 
 ```
-VK_ICD_FILENAMES=<build>/prefix/share/vulkan/icd.d/nvk_nvrm_icd.aarch64.json \
+VK_ICD_FILENAMES=WORK/prefix/share/vulkan/icd.d/nvk_nvrm_icd.aarch64.json \
 NVK_I_WANT_A_BROKEN_VULKAN_DRIVER=1 nvk-nvrm-probe
 ```
+
+`WORK` is the build directory. The machine architecture is part of the ICD
+file name: `aarch64` on arm64 and `x86_64` on amd64.
 
 It prints one JSON object per physical device (schema `nvk-nvrm-probe/1`) with
 the fields `vulkaninfo --summary` shows (API and driver version, type, driver

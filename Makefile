@@ -31,25 +31,31 @@ DRIVER_ENV = MK_NVRM_SRC="$(NVRM_SRC)" MK_OGKM="$(OGKM)" MK_WORK="$(WORK)" MK_JO
 help:
 	@printf '%s\n' \
 		"purpose: $(REPO_PURPOSE)" \
-		"CloudBSD private fork of Mesa: NVK on NVIDIA's open RM through libnvrm (see FORK-NOTES.md)." \
+		"CloudBSD private fork of Mesa: NVK on NVIDIA's open RM through libnvrm" \
+		"  (see FORK-NOTES.md)." \
 		"Targets (same names on every OS):" \
 		"  make purpose       print REPO_PURPOSE" \
 		"  make help          this message (default)" \
 		"  make preflight     report missing tools (JSON=1 for --json)" \
-		"  make install-deps  install missing packages with pkg (asks; YES=1 to skip asking)" \
+		"  make install-deps  install missing packages with pkg" \
+		"                     (asks; YES=1 to skip asking)" \
 		"  make configure     nothing to configure (prints the build options)" \
-		"  make build         build libnvrm, then NVK into WORK/prefix (see make configure for the options)" \
-		"  make test          vulkaninfo --summary and the device probe on libnvrm's fake backend" \
+		"  make build         build libnvrm, then NVK into WORK/prefix" \
+		"                     (see make configure for the options)" \
+		"  make test          vulkaninfo --summary and the device probe" \
+		"                     on libnvrm's fake backend" \
 		"  make clean         remove the build directory" \
 		"" \
 		"Switches:" \
-		"  NVRM_SRC=dir    nvidia-gb10-freebsd checkout (default \$$HOME/work/gb10/nvidia-gb10-freebsd)" \
+		"  NVRM_SRC=dir    nvidia-gb10-freebsd checkout" \
+		"                  (default \$$HOME/work/gb10/nvidia-gb10-freebsd)" \
 		"  WORK=dir        build directory (default ./cloudbsd-build)" \
 		"  JOBS=n          parallel jobs (default: half of hw.ncpu)" \
 		"  YES=1           do it without asking (install-deps)" \
 		"  JSON=1          preflight writes the --json contract" \
 		"" \
-		"PATH, PYTHONPATH, PKG_CONFIG_PATH and LLVM_CONFIG from the environment are used as they are." \
+		"PATH, PYTHONPATH, PKG_CONFIG_PATH and LLVM_CONFIG from the environment" \
+		"are used as they are." \
 		"Upstream build: $(UPSTREAM_BUILD)"
 
 .PHONY: help purpose preflight deps install-deps configure build test clean

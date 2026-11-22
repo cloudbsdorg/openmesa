@@ -105,7 +105,7 @@ nvk_files += files(
 _nvrm_inc = get_option('nvrm-include-dir')
 _nvrm_lib = get_option('nvrm-lib-dir')
 if _nvrm_inc == '' or _nvrm_lib == ''
-  error('nvk-kmd=nvrm needs nvrm-include-dir and nvrm-lib-dir')
+  error('NVK here runs on libnvrm: pass -Dnvrm-include-dir=<libnvrm>/include and -Dnvrm-lib-dir=<dir with libnvrm.so> (cloudbsd/make.sh does this)')
 endif
 dep_nvrm = declare_dependency(
   compile_args : ['-I' + _nvrm_inc, '-DNVK_KMD_NVRM=1'],

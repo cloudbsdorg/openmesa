@@ -33,7 +33,7 @@ mme_runner::mme_store_data(mme_builder *b, uint32_t dw_idx,
 /* CloudBSD fork: nouveau hardware MME execution removed; NVK runs on libnvrm.
  * The simulation runners below remain and do not use the winsys.
  */
-/* CPD-OFF -- upstream Mesa: the Fermi and Turing sim runners are parallel on purpose */
+/* CPD-OFF -- upstream Mesa: the Fermi and Turing sim-runner constructors and destructors are parallel on purpose */
 mme_fermi_sim_runner::mme_fermi_sim_runner(uint64_t data_addr)
 {
    memset(&info, 0, sizeof(info));
@@ -48,6 +48,7 @@ mme_fermi_sim_runner::mme_fermi_sim_runner(uint64_t data_addr)
 
 mme_fermi_sim_runner::~mme_fermi_sim_runner()
 { }
+/* CPD-ON */
 
 void
 mme_fermi_sim_runner::run_macro(const std::vector<uint32_t>& macro,
@@ -68,6 +69,7 @@ mme_fermi_sim_runner::run_macro(const std::vector<uint32_t>& macro,
                  1, &sim_mem);
 }
 
+/* CPD-OFF -- upstream Mesa: the Fermi and Turing sim-runner constructors and destructors are parallel on purpose */
 mme_tu104_sim_runner::mme_tu104_sim_runner(uint64_t data_addr)
 {
    memset(&info, 0, sizeof(info));
@@ -82,6 +84,7 @@ mme_tu104_sim_runner::mme_tu104_sim_runner(uint64_t data_addr)
 
 mme_tu104_sim_runner::~mme_tu104_sim_runner()
 { }
+/* CPD-ON */
 
 void
 mme_tu104_sim_runner::run_macro(const std::vector<uint32_t>& macro,
@@ -100,4 +103,3 @@ mme_tu104_sim_runner::run_macro(const std::vector<uint32_t>& macro,
    mme_tu104_sim(insts.size(), &insts[0], params.size(), p_params, 1, &sim_mem,
                  devinfo->cls_eng3d);
 }
-/* CPD-ON */
