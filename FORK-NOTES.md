@@ -71,12 +71,14 @@ Deleted from the tree:
   on a GPU through that winsys. Their build entries and module lines were
   removed in commit 4b21c1c37f2.
 
-Removed from the build but not yet from the tree: the gallium nouveau GL
-driver and its winsys (`src/gallium/drivers/nouveau`,
+Removed from the build, but kept in the tree on purpose: the gallium nouveau
+GL driver and its winsys (`src/gallium/drivers/nouveau`,
 `src/gallium/winsys/nouveau`). Nothing builds them since commit
-4b21c1c37f2. Deleting their files is a 131k-line change, which is more than
-one review by the commit gate can read, so how to commit it is still open
-on Track #2379.
+4b21c1c37f2. Keeping the files unbuilt keeps upstream rebases cheap, because
+deleting them would turn every upstream change to them into a modify/delete
+conflict. The check "no gallium nouveau source in the build" in
+`cloudbsd/make.sh` (run by `make test`) fails if any file under those two
+directories is compiled, or appears as a target in the build graph.
 
 Kept: NVK, NAK, nil, MME, cubin and the hardware headers in
 `src/nouveau/headers`.

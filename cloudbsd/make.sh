@@ -27,7 +27,7 @@ rust rust-bindgen-cli llvm19 libclc-llvm19 spirv-llvm-translator-llvm19 \
 spirv-tools glslang libdrm expat bison vulkan-headers vulkan-loader \
 vulkan-tools"
 TOOLS="git cc meson ninja rustc bindgen python3 pkg-config vulkaninfo"
-USAGE="usage: make.sh <preflight|install-deps|configure|build|test|no-nouveau|clean>"
+USAGE="usage: make.sh <preflight|install-deps|configure|build|test|no-nouveau|no-gallium-nouveau|clean>"
 
 die() {
 	printf 'make.sh: %s\n' "$*" >&2
@@ -257,6 +257,37 @@ no_nouveau_ws_targets_returns() {
 	[ "$got" -eq "$want" ]
 }
 
+no_gallium_nouveau() {
+	gallium_deps=$1
+	gallium_targets=$2
+	[ -s "$gallium_deps" ] || {
+		printf 'missing or empty ninja deps file: %s\n' "$gallium_deps" >&2
+		return 2
+	}
+	[ -s "$gallium_targets" ] || {
+		printf 'missing or empty ninja targets file: %s\n' "$gallium_targets" >&2
+		return 2
+	}
+	gallium_deps_matches=$(grep -E 'src/gallium/drivers/nouveau/|src/gallium/winsys/nouveau/' "$gallium_deps") && gallium_deps_status=0 || gallium_deps_status=$?
+	gallium_targets_matches=$(grep -E 'gallium/drivers/nouveau|gallium/winsys/nouveau' "$gallium_targets") && gallium_targets_status=0 || gallium_targets_status=$?
+	[ "$gallium_deps_status" -le 1 ] && [ "$gallium_targets_status" -le 1 ] || return 2
+	if [ "$gallium_deps_status" -eq 0 ] || [ "$gallium_targets_status" -eq 0 ]; then
+		printf 'gallium nouveau in the build:\n' >&2
+		[ "$gallium_deps_status" -ne 0 ] || printf '%s\n' "$gallium_deps_matches" >&2
+		[ "$gallium_targets_status" -ne 0 ] || printf '%s\n' "$gallium_targets_matches" >&2
+		return 1
+	fi
+	return 0
+}
+
+no_gallium_nouveau_returns() {
+	want=$1
+	shift
+	got=0
+	no_gallium_nouveau "$@" 2>/dev/null || got=$?
+	[ "$got" -eq "$want" ]
+}
+
 no_nouveau_uapi() {
 	uapi_deps=$1
 	uapi_ninja_status=$2
@@ -339,6 +370,16 @@ do_test() {
 	printf '%s\n' 'src/nouveau/winsys/libnouveau_ws.a: STATIC_LINKER' >"$out/fixture-nouveau-winsys-target.txt"
 	check "nouveau winsys build-graph check rejects a planted target" \
 	    no_nouveau_ws_targets_returns 1 "$out/fixture-nouveau-winsys-target.txt"
+	printf '%s\n' 'src/foo.o: ../src/gallium/drivers/nouveau/nv50/nv50_screen.c' >"$out/fixture-gallium-nouveau-deps.txt"
+	printf '%s\n' 'src/gallium/winsys/nouveau/drm/libnouveauwinsys.a: STATIC_LINKER' >"$out/fixture-gallium-nouveau-targets.txt"
+	check "no gallium nouveau source in the build" \
+	    no_gallium_nouveau "$out/ninja-deps.txt" "$out/ninja-targets.txt"
+	check "gallium nouveau check rejects a planted deps source" \
+	    no_gallium_nouveau_returns 1 "$out/fixture-gallium-nouveau-deps.txt" "$out/ninja-targets.txt"
+	check "gallium nouveau check rejects a planted target" \
+	    no_gallium_nouveau_returns 1 "$out/ninja-deps.txt" "$out/fixture-gallium-nouveau-targets.txt"
+	check "make.sh check functions (tests/test-make-checks.sh)" \
+	    sh "$top/cloudbsd/tests/test-make-checks.sh" "$out/make-checks"
 
 	# profile:chipset:PCI device id, from libnvrm's fake backend
 	# (lib/libnvrm/nvrm_fake.c): discrete is GB206-shaped, unified GB10.
@@ -435,6 +476,7 @@ configure) do_configure ;;
 build) do_build ;;
 test) do_test ;;
 no-nouveau) no_nouveau "$@" ;;
+no-gallium-nouveau) no_gallium_nouveau "$@" ;;
 clean) do_clean ;;
 *) die "$USAGE" ;;
 esac

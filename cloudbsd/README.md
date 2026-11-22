@@ -10,6 +10,7 @@ and never submitted upstream.
 | `make.sh` | the logic behind the top-level `Makefile` |
 | `preflight.sh` | the tool check (`make preflight`, `JSON=1` for `--json`) |
 | `tests/nvk-nvrm-probe.c` | lists Vulkan devices as JSON Lines and tries `vkCreateDevice` |
+| `tests/test-make-checks.sh` | checks `make.sh` check-command exit codes with fixture files |
 
 ## Build and test (FreeBSD, normal user)
 
