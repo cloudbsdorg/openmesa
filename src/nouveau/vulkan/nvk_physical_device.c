@@ -18,6 +18,7 @@
 #include "nvkmd/nvkmd.h"
 #ifdef NVK_KMD_NVRM
 #include "nvkmd/nvrm/nvkmd_nvrm.h"
+#include "nvkmd/nvrm/nvkmd_nvrm_msg.h"
 #else
 #include "nvkmd/nouveau/nvkmd_nouveau.h"
 #endif
@@ -1442,7 +1443,12 @@ nvk_get_device_properties(const struct nvk_instance *instance,
    STATIC_ASSERT(sizeof(instance->driver_build_sha) >= VK_UUID_SIZE);
    memcpy(properties->driverUUID, instance->driver_build_sha, VK_UUID_SIZE);
 
+#ifdef NVK_KMD_NVRM
+   /* CloudBSD fork: driverName names the libnvrm backend, not nouveau */
+   snprintf(properties->driverName, VK_MAX_DRIVER_NAME_SIZE, NVK_NVRM_DRIVER_NAME);
+#else
    snprintf(properties->driverName, VK_MAX_DRIVER_NAME_SIZE, "NVK");
+#endif
    snprintf(properties->driverInfo, VK_MAX_DRIVER_INFO_SIZE,
             "Mesa " PACKAGE_VERSION MESA_GIT_SHA1);
 }

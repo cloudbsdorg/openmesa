@@ -321,20 +321,31 @@ libnvk = static_library(
   gnu_symbol_visibility : 'hidden',
 )
 
+# CloudBSD fork: user-visible names say nvk_nvrm, not nouveau, when nvk_kmd is nvrm
+if nvk_kmd == 'nvrm'
+  _nvk_lib_name = 'vulkan_nvk_nvrm'
+  _nvk_icd_name = 'nvk_nvrm_icd.' + vulkan_manifest_suffix
+  _nvk_dev_icd_name = 'nvk_nvrm_devenv_icd.@0@.json'.format(host_machine.cpu())
+else
+  _nvk_lib_name = 'vulkan_nouveau'
+  _nvk_icd_name = 'nouveau_icd.' + vulkan_manifest_suffix
+  _nvk_dev_icd_name = 'nouveau_devenv_icd.@0@.json'.format(host_machine.cpu())
+endif
+
 libvulkan_nouveau = shared_library(
-  'vulkan_nouveau',
+  _nvk_lib_name,
   link_whole : [libnvk],
   link_args: [ld_args_build_id, ld_args_bsymbolic, ld_args_gc_sections],
   gnu_symbol_visibility : 'hidden',
   install : true,
 )
 
-icd_file_name = libname_prefix + 'vulkan_nouveau.' + libname_suffix
+icd_file_name = libname_prefix + _nvk_lib_name + '.' + libname_suffix
 
 nouveau_icd = custom_target(
   'nouveau_icd',
   input : [vk_icd_gen, vk_api_xml],
-  output : 'nouveau_icd.' + vulkan_manifest_suffix,
+  output : _nvk_icd_name,
   command : [
     prog_python, '@INPUT0@',
     '--api-version', '1.4', '--xml', '@INPUT1@',
@@ -349,11 +360,10 @@ nouveau_icd = custom_target(
   install : true,
 )
 
-_dev_icdname = 'nouveau_devenv_icd.@0@.json'.format(host_machine.cpu())
 _dev_icd = custom_target(
   'nouveau_devenv_icd',
   input : [vk_icd_gen, vk_api_xml],
-  output : _dev_icdname,
+  output : _nvk_dev_icd_name,
   command : [
     prog_python, '@INPUT0@',
     '--api-version', '1.4', '--xml', '@INPUT1@',

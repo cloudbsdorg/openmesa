@@ -135,6 +135,8 @@ probe_device(VkPhysicalDevice pd, uint32_t index)
 	printf(",\"createDevice\":\"%s\",\"stubMessage\":",
 	    result_name(r));
 	json_str(NVK_NVRM_STUB_MSG);
+	printf(",\"expectedDriverName\":");
+	json_str(NVK_NVRM_DRIVER_NAME);
 	printf("}\n");
 }
 

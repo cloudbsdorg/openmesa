@@ -38,7 +38,7 @@ help:
 		"  make preflight     report missing tools (JSON=1 for --json)" \
 		"  make install-deps  install missing packages with pkg (asks; YES=1 to skip asking)" \
 		"  make configure     nothing to configure (prints the build options)" \
-		"  make build         build libnvrm, then NVK with -Dnvk-kmd=nvrm" \
+		"  make build         build libnvrm, then NVK into WORK/prefix (see make configure for the options)" \
 		"  make test          vulkaninfo --summary and the device probe on libnvrm's fake backend" \
 		"  make clean         remove the build directory" \
 		"" \

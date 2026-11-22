@@ -20,14 +20,16 @@ make test
 ```
 
 `make build` builds libnvrm from `NVRM_SRC/lib/libnvrm`, then NVK with
-`-Dvulkan-drivers=nouveau -Dnvk-kmd=nvrm`, then the probe. Nothing is
-installed. `make test` runs on libnvrm's **fake backend** (`NVRM_BACKEND=fake`,
-profiles `discrete` and `unified`), so it needs no GPU and no nvidia driver.
+`-Dvulkan-drivers=nvk -Dnvk-kmd=nvrm`, then the probe. NVK and its ICD are
+installed under `WORK/prefix`. `make test` runs on libnvrm's **fake backend**
+(`NVRM_BACKEND=fake`, profiles `discrete` and `unified`), so it needs no GPU
+and no nvidia driver. It also fails if an installed file name, the installed
+ICD or the program output says "nouveau".
 
 ## nvk-nvrm-probe
 
 ```
-VK_ICD_FILENAMES=<build>/mesa/src/nouveau/vulkan/nouveau_devenv_icd.aarch64.json \
+VK_ICD_FILENAMES=<build>/prefix/share/vulkan/icd.d/nvk_nvrm_icd.aarch64.json \
 NVK_I_WANT_A_BROKEN_VULKAN_DRIVER=1 nvk-nvrm-probe
 ```
 

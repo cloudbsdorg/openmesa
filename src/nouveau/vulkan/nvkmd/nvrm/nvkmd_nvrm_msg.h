@@ -11,6 +11,8 @@
 #ifndef NVKMD_NVRM_MSG_H
 #define NVKMD_NVRM_MSG_H 1
 
+#define NVK_NVRM_DRIVER_NAME "NVK (CloudBSD, libnvrm)"
+
 #define NVK_NVRM_STUB_MSG                                                    \
    "nvk-nvrm: this build can list NVIDIA GPUs but cannot create a Vulkan "  \
    "device yet (queues are not implemented); to use another driver, set "   \

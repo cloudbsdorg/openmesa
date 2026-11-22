@@ -62,7 +62,7 @@ arch_name() {
 
 libnvrm_dir() { printf '%s\n' "$work/libnvrm"; }
 mesa_dir() { printf '%s\n' "$work/mesa"; }
-icd_json() { printf '%s\n' "$(mesa_dir)/src/nouveau/vulkan/nouveau_devenv_icd.$(arch_name).json"; }
+icd_json() { printf '%s\n' "$work/prefix/share/vulkan/icd.d/nvk_nvrm_icd.$(arch_name).json"; }
 probe_bin() { printf '%s\n' "$work/probe/nvk-nvrm-probe"; }
 
 do_preflight() {
@@ -87,9 +87,28 @@ do_install_deps() {
 	fi
 }
 
+mesa_opts="--prefix=$work/prefix
+-Dbuildtype=debugoptimized
+-Dvulkan-drivers=nvk
+-Dgallium-drivers=
+-Dplatforms=
+-Dglx=disabled
+-Degl=disabled
+-Dgbm=disabled
+-Dopengl=false
+-Dgles1=disabled
+-Dgles2=disabled
+-Dvideo-codecs=
+-Dvulkan-layers=
+-Dtools=
+-Dllvm=enabled
+-Dnvk-kmd=nvrm
+-Dnvrm-include-dir=$nvrm_src/lib/libnvrm/include
+-Dnvrm-lib-dir=$(libnvrm_dir)"
+
 do_configure() {
 	printf '%s\n' "nothing to configure" \
-	    "build options: -Dvulkan-drivers=nouveau -Dnvk-kmd=nvrm -Dgallium-drivers= -Dplatforms=" \
+	    "build options: $mesa_opts" \
 	    "libnvrm from: $nvrm_src/lib/libnvrm" \
 	    "build directory: $work"
 }
@@ -109,19 +128,11 @@ build_libnvrm() {
 
 build_mesa() {
 	if [ ! -f "$(mesa_dir)/build.ninja" ]; then
-		meson setup "$(mesa_dir)" "$top" \
-		    -Dbuildtype=debugoptimized \
-		    -Dvulkan-drivers=nouveau -Dgallium-drivers= -Dplatforms= \
-		    -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dopengl=false \
-		    -Dgles1=disabled -Dgles2=disabled -Dvideo-codecs= \
-		    -Dvulkan-layers= -Dtools= -Dllvm=enabled \
-		    -Dnvk-kmd=nvrm \
-		    -Dnvrm-include-dir="$nvrm_src/lib/libnvrm/include" \
-		    -Dnvrm-lib-dir="$(libnvrm_dir)"
+		meson setup "$(mesa_dir)" "$top" $mesa_opts
 	fi
-	ninja -C "$(mesa_dir)" -j"$(ncpu)" \
-	    src/nouveau/vulkan/libvulkan_nouveau.so \
-	    "src/nouveau/vulkan/nouveau_devenv_icd.$(arch_name).json"
+	meson configure "$(mesa_dir)" $mesa_opts
+	ninja -C "$(mesa_dir)" -j"$(ncpu)"
+	meson install -C "$(mesa_dir)" --quiet
 }
 
 build_probe() {
@@ -164,12 +175,49 @@ check() {
 
 has() { grep -qF -- "$2" "$1"; }
 lacks() { ! grep -qF -- "$2" "$1"; }
+no_nouveau() {
+	[ "$#" -gt 0 ] || return 2
+	matches=$(grep -il nouveau "$@") && status=0 || status=$?
+	case $status in
+	0)
+		printf 'nouveau found in:\n%s\n' "$matches" >&2
+		return 1
+		;;
+	1) return 0 ;;
+	*) return 2 ;;
+	esac
+}
+no_nouveau_returns() {
+	want=$1
+	shift
+	got=0
+	no_nouveau "$@" || got=$?
+	[ "$got" -eq "$want" ]
+}
+
+upstream_copies_match() {
+	status=0
+	for file in UPSTREAM-CLAUDE.md UPSTREAM-GEMINI.md; do
+		if ! cmp -s "$top/$file" "$top/UPSTREAM-AGENTS.md"; then
+			printf '%s\n' "$file differs; copy UPSTREAM-AGENTS.md over it" >&2
+			status=1
+		fi
+	done
+	return "$status"
+}
 
 do_test() {
 	refuse_root
-	[ -x "$(probe_bin)" ] && [ -f "$(icd_json)" ] || die "run make build first"
+	[ -x "$(probe_bin)" ] && [ -f "$(icd_json)" ] || die "no build in $work: run make build first (with the same WORK)"
 	mkdir -p "$work/tmp" "$work/test"
 	out=$work/test
+
+	installed_names=$(find "$work/prefix" -iname '*nouveau*' -print) && find_status=0 || find_status=$?
+	check "no installed file name contains nouveau" \
+	    test "$find_status" -eq 0 -a -z "$installed_names"
+	check "installed JSON files contain no nouveau names" \
+	    find "$work/prefix" -type f -name '*.json' \
+	    -exec sh "$top/cloudbsd/make.sh" no-nouveau {} +
 
 	# profile:chipset:PCI device id, from libnvrm's fake backend
 	# (lib/libnvrm/nvrm_fake.c): discrete is GB206-shaped, unified GB10.
@@ -188,6 +236,10 @@ do_test() {
 		    has "$out/$p.jsonl" "\"deviceID\":$devid,"
 		check "$p: vkCreateDevice is refused by the stub" \
 		    has "$out/$p.jsonl" '"createDevice":"VK_ERROR_FEATURE_NOT_PRESENT"'
+		expected_driver=$(sed -n 's/.*"expectedDriverName":"\([^"]*\)".*/\1/p' "$out/$p.jsonl" | head -1)
+		actual_driver=$(sed -n 's/.*"driverName":"\([^"]*\)".*/\1/p' "$out/$p.jsonl" | head -1)
+		check "$p: driver name identifies NVK on libnvrm" \
+		    test -n "$expected_driver" -a "$actual_driver" = "$expected_driver"
 		# The expected text comes from the probe, which takes it from the
 		# backend's own header: one source, no copy here.
 		msg=$(sed -n 's/.*"stubMessage":"\([^"]*\)".*/\1/p' "$out/$p.jsonl" | head -1)
@@ -201,7 +253,15 @@ do_test() {
 		    has "$out/$p.vulkaninfo" "ERROR_FEATURE_NOT_PRESENT"
 		check "$p: vulkaninfo did not crash" \
 		    lacks "$out/$p.vulkaninfo" "Segmentation fault"
+		check "$p: program output contains no nouveau names" \
+		    no_nouveau "$out/$p.jsonl" "$out/$p.err" "$out/$p.vulkaninfo"
 	done
+
+	printf '%s\n' 'library_path: libvulkan_nouveau.so' >"$out/fixture-leak.txt"
+	check "leak check catches a planted nouveau name" \
+	    no_nouveau_returns 1 "$out/fixture-leak.txt"
+	check "leak check rejects a missing path" \
+	    no_nouveau_returns 2 "$out/missing-leak-check"
 
 	# No GPU, and no nvidia driver at all: NVK lists no device and reports no
 	# error of its own.  (With no device in any ICD the loader itself answers
@@ -222,6 +282,12 @@ do_test() {
 	# host-visible (flags 1|2 = 3) on the VRAM heap.
 	check "discrete: no host-visible VRAM memory type" \
 	    lacks "$out/discrete.jsonl" '{"heap":0,"flags":7}'
+
+	# UPSTREAM-AGENTS.md is Mesa's AGENTS.md; UPSTREAM-CLAUDE.md and
+	# UPSTREAM-GEMINI.md must stay byte-identical copies of it (FORK-NOTES.md).
+	# The gate does not scan links, so these must stay regular files.
+	check "UPSTREAM-CLAUDE.md and UPSTREAM-GEMINI.md equal UPSTREAM-AGENTS.md" \
+	    upstream_copies_match
 
 	if [ "$fail" = 0 ]; then
 		printf '%s\n' "test: ok"
@@ -247,6 +313,7 @@ install-deps) do_install_deps ;;
 configure) do_configure ;;
 build) do_build ;;
 test) do_test ;;
+no-nouveau) no_nouveau "$@" ;;
 clean) do_clean ;;
 *) die "usage: make.sh <preflight|install-deps|configure|build|test|clean>" ;;
 esac

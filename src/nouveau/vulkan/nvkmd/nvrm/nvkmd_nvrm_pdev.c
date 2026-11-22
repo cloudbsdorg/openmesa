@@ -123,7 +123,9 @@ struct nvkmd_nvrm_sm_limits {
    uint8_t max_blocks_per_mp;
    uint16_t max_smem_per_wg_kB;
    uint8_t smem_size_count;
-   uint16_t smem_sizes_kB[10];
+   /* CloudBSD fork: keep the source and destination array sizes in sync. */
+   uint16_t smem_sizes_kB[
+      ARRAY_SIZE(((struct nv_device_info *)0)->sm_smem_sizes_kB)];
 };
 
 static const struct nvkmd_nvrm_sm_limits nvkmd_nvrm_sm_limits[] = {

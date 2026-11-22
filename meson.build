@@ -267,6 +267,15 @@ with_gallium_drm = system_has_kms_drm and [
 ].contains(true)
 
 _vulkan_drivers = get_option('vulkan-drivers')
+# CloudBSD fork: -Dvulkan-drivers=nvk is an alias of nouveau
+_vk_drv_resolved = []
+foreach _d : _vulkan_drivers
+  _resolved = _d == 'nvk' ? 'nouveau' : _d
+  if not _vk_drv_resolved.contains(_resolved)
+    _vk_drv_resolved += _resolved
+  endif
+endforeach
+_vulkan_drivers = _vk_drv_resolved
 if _vulkan_drivers.contains('auto')
   # TODO: handle swrat driver if llvm is auto/disabled
   if system_has_kms_drm
