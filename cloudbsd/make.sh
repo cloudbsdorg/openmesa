@@ -195,6 +195,74 @@ no_nouveau_returns() {
 	[ "$got" -eq "$want" ]
 }
 
+no_nouveau_uapi_deps() {
+	[ "$#" -eq 1 ] && [ -s "$1" ] || {
+		printf 'missing or empty ninja deps file: %s\n' "${1:-}" >&2
+		return 2
+	}
+	uapi_matches=$(grep -E 'nouveau_drm\.h|drm_is_nouveau\.h|/nvif/|libdrm/nouveau|nouveau_(bo|device|context|private)\.h' "$1") && uapi_status=0 || uapi_status=$?
+	case $uapi_status in
+	0)
+		printf 'nouveau uAPI dependency found:\n%s\n' "$uapi_matches" >&2
+		return 1
+		;;
+	1) return 0 ;;
+	*) return 2 ;;
+	esac
+}
+
+no_nouveau_uapi_deps_returns() {
+	want=$1
+	file=$2
+	got=0
+	no_nouveau_uapi_deps "$file" || got=$?
+	[ "$got" -eq "$want" ]
+}
+
+no_nouveau_ws_targets() {
+	ws_targets=$1
+	ws_ninja_status=$2
+	[ "$ws_ninja_status" -eq 0 ] || {
+		printf 'ninja -t targets all failed with status %s\n' "$ws_ninja_status" >&2
+		return 2
+	}
+	[ -s "$ws_targets" ] || {
+		printf 'missing or empty ninja targets file: %s\n' "$ws_targets" >&2
+		return 2
+	}
+	ws_matches=$(grep -F 'nouveau_ws' "$ws_targets") && ws_grep_status=0 || ws_grep_status=$?
+	case $ws_grep_status in
+	0)
+		printf 'nouveau winsys target found:\n%s\n' "$ws_matches" >&2
+		return 1
+		;;
+	1) return 0 ;;
+	*) return 2 ;;
+	esac
+}
+
+no_nouveau_ws_targets_returns() {
+	want=$1
+	file=$2
+	got=0
+	no_nouveau_ws_targets "$file" 0 || got=$?
+	[ "$got" -eq "$want" ]
+}
+
+no_nouveau_uapi() {
+	uapi_deps=$1
+	uapi_ninja_status=$2
+	[ "$uapi_ninja_status" -eq 0 ] || {
+		printf 'ninja -t deps failed with status %s\n' "$uapi_ninja_status" >&2
+		return 2
+	}
+	[ ! -e "$top/include/drm-uapi/nouveau_drm.h" ] || {
+		printf '%s\n' 'include/drm-uapi/nouveau_drm.h still exists' >&2
+		return 1
+	}
+	no_nouveau_uapi_deps "$uapi_deps" || return $?
+}
+
 upstream_copies_match() {
 	status=0
 	for file in UPSTREAM-CLAUDE.md UPSTREAM-GEMINI.md; do
@@ -218,6 +286,22 @@ do_test() {
 	check "installed JSON files contain no nouveau names" \
 	    find "$work/prefix" -type f -name '*.json' \
 	    -exec sh "$top/cloudbsd/make.sh" no-nouveau {} +
+
+	ninja -C "$(mesa_dir)" -t deps >"$out/ninja-deps.txt" && deps_status=0 || deps_status=$?
+	check "no nouveau uAPI in the build" \
+	    no_nouveau_uapi "$out/ninja-deps.txt" "$deps_status"
+	ninja -C "$(mesa_dir)" -t targets all >"$out/ninja-targets.txt" && targets_status=0 || targets_status=$?
+	check "no nouveau winsys target in the build graph" \
+	    no_nouveau_ws_targets "$out/ninja-targets.txt" "$targets_status"
+	printf '%s\n' 'src/foo.o: include/drm-uapi/nouveau_drm.h' >"$out/fixture-nouveau-uapi-deps.txt"
+	check "nouveau uAPI deps check rejects a planted header" \
+	    no_nouveau_uapi_deps_returns 1 "$out/fixture-nouveau-uapi-deps.txt"
+	printf '%s\n' 'src/foo.o: /usr/local/include/libdrm/nouveau/nvif/ioctl.h' >"$out/fixture-nouveau-uapi-nvif-deps.txt"
+	check "nouveau uAPI deps check rejects a planted nvif header" \
+	    no_nouveau_uapi_deps_returns 1 "$out/fixture-nouveau-uapi-nvif-deps.txt"
+	printf '%s\n' 'src/nouveau/winsys/libnouveau_ws.a: STATIC_LINKER' >"$out/fixture-nouveau-winsys-target.txt"
+	check "nouveau winsys build-graph check rejects a planted target" \
+	    no_nouveau_ws_targets_returns 1 "$out/fixture-nouveau-winsys-target.txt"
 
 	# profile:chipset:PCI device id, from libnvrm's fake backend
 	# (lib/libnvrm/nvrm_fake.c): discrete is GB206-shaped, unified GB10.

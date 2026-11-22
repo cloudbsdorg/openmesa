@@ -16,12 +16,9 @@
 #include "nvk_shader.h"
 #include "nvk_wsi.h"
 #include "nvkmd/nvkmd.h"
-#ifdef NVK_KMD_NVRM
+/* CloudBSD fork: nouveau nvkmd backend include removed; NVK runs on libnvrm. */
 #include "nvkmd/nvrm/nvkmd_nvrm.h"
 #include "nvkmd/nvrm/nvkmd_nvrm_msg.h"
-#else
-#include "nvkmd/nouveau/nvkmd_nouveau.h"
-#endif
 #include "git_sha1.h"
 #include "util/detect_os.h"
 #include "util/disk_cache.h"
@@ -1443,12 +1440,8 @@ nvk_get_device_properties(const struct nvk_instance *instance,
    STATIC_ASSERT(sizeof(instance->driver_build_sha) >= VK_UUID_SIZE);
    memcpy(properties->driverUUID, instance->driver_build_sha, VK_UUID_SIZE);
 
-#ifdef NVK_KMD_NVRM
-   /* CloudBSD fork: driverName names the libnvrm backend, not nouveau */
+   /* CloudBSD fork: nouveau driverName removed; NVK runs on libnvrm. */
    snprintf(properties->driverName, VK_MAX_DRIVER_NAME_SIZE, NVK_NVRM_DRIVER_NAME);
-#else
-   snprintf(properties->driverName, VK_MAX_DRIVER_NAME_SIZE, "NVK");
-#endif
    snprintf(properties->driverInfo, VK_MAX_DRIVER_INFO_SIZE,
             "Mesa " PACKAGE_VERSION MESA_GIT_SHA1);
 }
@@ -1668,15 +1661,11 @@ nvk_create_physical_device_for_nvkmd(struct nvk_instance *instance,
          .heapIndex = vram_heap_idx,
       };
 
-#ifdef NVK_KMD_NVRM
-      /* CloudBSD fork: the nvrm backend reports a BAR only when CPU maps of
-       * it allow any access (bar_size_B == 0 otherwise, for example on
-       * Device-nGnRE BAR mappings), so VRAM is host-visible only then.
+      /* CloudBSD fork: nouveau host-visible VRAM rule removed; NVK runs on
+       * libnvrm, which reports a BAR only when CPU maps allow any access
+       * (bar_size_B == 0 otherwise, for example Device-nGnRE mappings).
        */
       const bool vram_host_visible = pdev->info.bar_size_B > 0;
-#else
-      const bool vram_host_visible = true;
-#endif
       if (pdev->info.cls_eng3d >= MAXWELL_A && vram_host_visible) {
          pdev->mem_types[pdev->mem_type_count++] = (VkMemoryType) {
             .propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
@@ -1777,25 +1766,9 @@ fail_nvkmd:
    return result;
 }
 
-VkResult
-nvk_create_drm_physical_device(struct vk_instance *_instance,
-                               struct _drmDevice *drm_device,
-                               struct vk_physical_device **pdev_out)
-{
-   struct nvk_instance *instance = (struct nvk_instance *)_instance;
-
-   struct nvkmd_pdev *nvkmd;
-   VkResult result = nvkmd_try_create_pdev_for_drm(drm_device,
-                                                   &instance->vk.base,
-                                                   instance->debug_flags,
-                                                   &nvkmd);
-   if (result != VK_SUCCESS)
-      return result;
-
-   return nvk_create_physical_device_for_nvkmd(instance, nvkmd, pdev_out);
-}
-
-#ifdef NVK_KMD_NVRM
+/* CloudBSD fork: nouveau DRM physical-device creation removed; NVK runs on
+ * libnvrm.
+ */
 VkResult
 nvk_enumerate_nvrm_physical_devices(struct vk_instance *_instance)
 {
@@ -1847,7 +1820,6 @@ nvk_enumerate_nvrm_physical_devices(struct vk_instance *_instance)
 
    return result;
 }
-#endif
 
 void
 nvk_physical_device_destroy(struct vk_physical_device *vk_pdev)

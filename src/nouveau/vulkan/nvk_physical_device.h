@@ -93,13 +93,10 @@ nvk_video_enabled(const struct nvk_instance *instance,
           info->has_video && VIDEO_CODEC_H264DEC;
 }
 
-VkResult nvk_create_drm_physical_device(struct vk_instance *vk_instance,
-                                        struct _drmDevice *drm_device,
-                                        struct vk_physical_device **pdev_out);
-
-#ifdef NVK_KMD_NVRM
+/* CloudBSD fork: nouveau DRM physical-device declaration removed; NVK runs on
+ * libnvrm.
+ */
 VkResult nvk_enumerate_nvrm_physical_devices(struct vk_instance *vk_instance);
-#endif
 
 void nvk_physical_device_destroy(struct vk_physical_device *vk_device);
 

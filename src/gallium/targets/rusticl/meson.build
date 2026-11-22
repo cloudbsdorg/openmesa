@@ -36,7 +36,7 @@ librusticl = shared_library(
     driver_asahi,
     driver_freedreno,
     driver_iris,
-    driver_nouveau,
+    # CloudBSD fork: nouveau Gallium dependency removed; NVK runs on libnvrm.
     driver_r600,
     driver_panfrost,
     driver_radeonsi,

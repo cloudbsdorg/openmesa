@@ -33,6 +33,8 @@ idep_nouveau_mme = declare_dependency(
 )
 
 if with_tests and not with_platform_android
+  # CloudBSD fork: nouveau hardware MME tests and winsys dependencies removed;
+  # NVK runs on libnvrm. The simulation-only mme_builder test remains.
   test('mme_builder',
     executable(
       'mme_builder_test',
@@ -40,63 +42,13 @@ if with_tests and not with_platform_android
       gnu_symbol_visibility : 'hidden',
       include_directories : [inc_include, inc_src],
       dependencies : [
-        dep_libdrm,
         idep_gtest,
         idep_mesautil,
         idep_nvidia_headers,
         idep_nouveau_mme,
-        idep_nouveau_ws
       ],
     ),
     suite : ['nouveau'],
-  )
-
-  executable(
-    'mme_fermi_sim_hw_test',
-    files('tests/mme_runner.cpp', 'tests/mme_fermi_sim_hw_test.cpp'),
-    gnu_symbol_visibility : 'hidden',
-    include_directories : [inc_include, inc_src],
-    dependencies : [
-      dep_libdrm,
-      idep_gtest,
-      idep_mesautil,
-      idep_nvidia_headers,
-      idep_nouveau_mme,
-      idep_nouveau_ws
-    ],
-    install : false,
-  )
-
-  executable(
-    'mme_common_hw_test',
-    files('tests/mme_runner.cpp', 'tests/mme_common_hw_test.cpp'),
-    gnu_symbol_visibility : 'hidden',
-    include_directories : [inc_include, inc_src],
-    dependencies : [
-      dep_libdrm,
-      idep_gtest,
-      idep_mesautil,
-      idep_nvidia_headers,
-      idep_nouveau_mme,
-      idep_nouveau_ws
-    ],
-    install : false,
-  )
-
-  executable(
-    'mme_tu104_sim_hw_test',
-    files('tests/mme_runner.cpp', 'tests/mme_tu104_sim_hw_test.cpp'),
-    gnu_symbol_visibility : 'hidden',
-    include_directories : [inc_include, inc_src],
-    dependencies : [
-      dep_libdrm,
-      idep_gtest,
-      idep_mesautil,
-      idep_nvidia_headers,
-      idep_nouveau_mme,
-      idep_nouveau_ws
-    ],
-    install : false,
   )
 endif
 
@@ -108,17 +60,4 @@ executable(
   install : with_tools.contains('nouveau'),
 )
 
-executable(
-  'nv_mme_method_dumper',
-  'nv_mme_method_dumper.c',
-  include_directories : [inc_include, inc_src],
-  dependencies : [
-    dep_libdrm,
-    idep_mesautil,
-    idep_nvidia_headers,
-    idep_nouveau_mme,
-    idep_nouveau_ws
-  ],
-  build_by_default : with_tools.contains('nouveau'),
-  install : with_tools.contains('nouveau'),
-)
+# CloudBSD fork: nouveau MME method dumper removed; NVK runs on libnvrm.

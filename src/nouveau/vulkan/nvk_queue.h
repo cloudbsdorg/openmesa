@@ -11,9 +11,7 @@
 #include "vk_queue.h"
 #include "nvkmd/nvkmd.h"
 
-struct nouveau_ws_bo;
-struct nouveau_ws_context;
-struct novueau_ws_push;
+/* CloudBSD fork: nouveau winsys declarations removed; NVK runs on libnvrm. */
 struct nvk_device;
 struct nvkmd_mem;
 struct nvkmd_ctx;
@@ -82,7 +80,9 @@ nvk_queue_engines_from_queue_flags(VkQueueFlags queue_flags)
 static inline uint8_t
 nvk_queue_subchannels_from_engines(enum nvkmd_engines engines)
 {
-   /* Note: These line up with nouveau_ws_context_create */
+   /* CloudBSD fork: nouveau winsys subchannel comment removed; NVK runs on
+    * libnvrm.
+    */
    uint8_t subc_mask = 0;
 
    if (engines & NVKMD_ENGINE_COPY)

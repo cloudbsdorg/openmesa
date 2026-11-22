@@ -7,10 +7,7 @@
 
 #include "mme_builder.h"
 
-struct nouveau_bo;
-struct nouveau_ws_contxt;
-struct nouveau_ws_device;
-
+// CloudBSD fork: nouveau winsys declarations removed; NVK runs on libnvrm.
 #include "nv_push.h"
 #include "nv_push_cl9097.h"
 #include "nv_push_clc7c0.h"
@@ -34,31 +31,7 @@ public:
    uint32_t *data;
 };
 
-class mme_hw_runner : public mme_runner {
-public:
-   mme_hw_runner();
-   virtual ~mme_hw_runner();
-
-   bool set_up_hw(uint16_t min_cls, uint16_t max_cls);
-   void push_macro(uint32_t id, const std::vector<uint32_t>& macro);
-   void reset_push();
-   void submit_push();
-
-   virtual void run_macro(const std::vector<uint32_t>& macro,
-                          const std::vector<uint32_t>& params);
-
-   struct nv_push *p;
-
-private:
-   struct nouveau_ws_device *dev;
-   struct nouveau_ws_context *ctx;
-   struct nouveau_ws_bo *data_bo;
-   struct nouveau_ws_bo *push_bo;
-   uint32_t syncobj;
-   void *push_map;
-   struct nv_push push;
-};
-
+// CloudBSD fork: nouveau hardware MME runner removed; NVK runs on libnvrm.
 class mme_fermi_sim_runner : public mme_runner {
 public:
    mme_fermi_sim_runner(uint64_t data_addr);

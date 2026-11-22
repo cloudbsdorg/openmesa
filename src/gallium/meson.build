@@ -6,7 +6,8 @@ sym_config = configuration_data()
 
 foreach d : [[with_gallium_r300 or with_gallium_radeonsi or with_gallium_r600, 'radeon_drm_winsys_create'],
              [with_gallium_radeonsi, 'amdgpu_winsys_create'],
-             [with_gallium_nouveau, 'nouveau_drm_screen_create'],
+             # CloudBSD fork: nouveau Gallium symbol removed; NVK runs on
+             # libnvrm.
              [with_gallium_freedreno, 'fd_drm_screen_create_renderonly'],
              [amd_with_llvm and with_gallium_radeonsi, 'ac_init_shared_llvm_once']]
   if d[0]
@@ -95,12 +96,8 @@ if with_gallium_radeonsi
 else
   driver_radeonsi = declare_dependency()
 endif
-if with_gallium_nouveau
-  subdir('winsys/nouveau/drm')
-  subdir('drivers/nouveau')
-else
-  driver_nouveau = declare_dependency()
-endif
+# CloudBSD fork: nouveau Gallium driver and winsys wiring removed; NVK runs on
+# libnvrm.
 if with_gallium_freedreno
   subdir('winsys/freedreno/drm')
   subdir('drivers/freedreno')

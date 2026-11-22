@@ -7,7 +7,7 @@ struct pipe_screen_config;
 extern const struct drm_driver_descriptor i915_driver_descriptor;
 extern const struct drm_driver_descriptor iris_driver_descriptor;
 extern const struct drm_driver_descriptor crocus_driver_descriptor;
-extern const struct drm_driver_descriptor nouveau_driver_descriptor;
+/* CloudBSD fork: the nouveau GL driver descriptor is removed with the driver. */
 extern const struct drm_driver_descriptor r300_driver_descriptor;
 extern const struct drm_driver_descriptor r600_driver_descriptor;
 extern const struct drm_driver_descriptor radeonsi_driver_descriptor;

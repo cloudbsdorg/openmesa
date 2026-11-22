@@ -71,7 +71,7 @@
 		dri3*;
 		loader_dri3*;
 		dri_create_drawable;
-		@nouveau_drm_screen_create@
+		/* CloudBSD fork: nouveau Gallium symbol removed; NVK runs on libnvrm. */
 		@radeon_drm_winsys_create@
 		@amdgpu_winsys_create@
 		@fd_drm_screen_create_renderonly@

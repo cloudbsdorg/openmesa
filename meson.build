@@ -165,29 +165,36 @@ if gallium_drivers.contains('auto')
     # TODO: Sparc
     # TODO: handle llvm being disabled or auto when setting default_drivers
     if ['x86', 'x86_64'].contains(host_machine.cpu_family())
+      # CloudBSD fork: nouveau Gallium default removed; NVK runs on libnvrm.
       gallium_drivers = [
-        'r300', 'r600', 'radeonsi', 'nouveau', 'virgl', 'svga', 'llvmpipe', 'softpipe',
+        'r300', 'r600', 'radeonsi', 'virgl', 'svga', 'llvmpipe', 'softpipe',
         'iris', 'crocus', 'i915', 'zink'
       ]
     elif ['aarch64'].contains(host_machine.cpu_family())
+      # CloudBSD fork: nouveau and dependent tegra Gallium defaults removed;
+      # NVK runs on libnvrm.
       gallium_drivers = [
-        'v3d', 'vc4', 'freedreno', 'etnaviv', 'nouveau', 'svga',
-        'tegra', 'virgl', 'lima', 'panfrost', 'llvmpipe', 'softpipe', 'iris',
+        'v3d', 'vc4', 'freedreno', 'etnaviv', 'svga',
+        'virgl', 'lima', 'panfrost', 'llvmpipe', 'softpipe', 'iris',
         'zink', 'asahi'
       ]
     elif ['arm'].contains(host_machine.cpu_family())
+      # CloudBSD fork: nouveau and dependent tegra Gallium defaults removed;
+      # NVK runs on libnvrm.
       gallium_drivers = [
-        'v3d', 'vc4', 'freedreno', 'etnaviv', 'nouveau', 'svga',
-        'tegra', 'virgl', 'lima', 'panfrost', 'llvmpipe', 'softpipe', 'iris',
+        'v3d', 'vc4', 'freedreno', 'etnaviv', 'svga',
+        'virgl', 'lima', 'panfrost', 'llvmpipe', 'softpipe', 'iris',
         'zink'
       ]
     elif ['mips', 'mips64', 'ppc', 'ppc64', 'riscv32', 'riscv64'].contains(host_machine.cpu_family())
+      # CloudBSD fork: nouveau Gallium default removed; NVK runs on libnvrm.
       gallium_drivers = [
-        'r300', 'r600', 'radeonsi', 'nouveau', 'virgl', 'llvmpipe', 'softpipe', 'zink'
+        'r300', 'r600', 'radeonsi', 'virgl', 'llvmpipe', 'softpipe', 'zink'
       ]
     elif ['loongarch64'].contains(host_machine.cpu_family())
+      # CloudBSD fork: nouveau Gallium default removed; NVK runs on libnvrm.
       gallium_drivers = [
-        'r300', 'r600', 'radeonsi', 'nouveau', 'virgl', 'etnaviv', 'llvmpipe', 'softpipe', 'zink'
+        'r300', 'r600', 'radeonsi', 'virgl', 'etnaviv', 'llvmpipe', 'softpipe', 'zink'
       ]
     else
       error('Unknown architecture @0@. Please pass -Dgallium-drivers to set driver options. Patches gladly accepted to fix this.'.format(
@@ -202,9 +209,11 @@ if gallium_drivers.contains('auto')
           host_machine.system()))
   endif
 elif gallium_drivers.contains('all')
+   # CloudBSD fork: nouveau and dependent tegra Gallium drivers removed; NVK
+   # runs on libnvrm.
    gallium_drivers = [
      'r300', 'r600', 'radeonsi', 'crocus', 'v3d', 'vc4', 'freedreno', 'etnaviv', 'i915',
-     'nouveau', 'svga', 'tegra', 'virgl', 'lima', 'panfrost', 'llvmpipe', 'softpipe', 'iris',
+     'svga', 'virgl', 'lima', 'panfrost', 'llvmpipe', 'softpipe', 'iris',
      'zink', 'd3d12', 'asahi', 'rocket', 'ethosu'
    ]
 endif
@@ -215,7 +224,7 @@ with_panfrost_vdrm = get_option('panfrost-virtio')
 with_gallium_radeonsi = gallium_drivers.contains('radeonsi')
 with_gallium_r300 = gallium_drivers.contains('r300')
 with_gallium_r600 = gallium_drivers.contains('r600')
-with_gallium_nouveau = gallium_drivers.contains('nouveau')
+# CloudBSD fork: with_gallium_nouveau removed; NVK runs on libnvrm.
 with_gallium_freedreno = gallium_drivers.contains('freedreno')
 with_gallium_softpipe = gallium_drivers.contains('softpipe')
 with_gallium_llvmpipe = gallium_drivers.contains('llvmpipe')
@@ -406,7 +415,8 @@ with_any_intel = [
   with_intel_tools,
   with_intel_vk,
 ].contains(true)
-with_any_nouveau = with_gallium_nouveau or with_nouveau_vk
+# CloudBSD fork: Gallium nouveau removed; NVK runs on libnvrm.
+with_any_nouveau = with_nouveau_vk
 with_any_panfrost = [
   with_gallium_panfrost,
   with_panfrost_vk,
@@ -418,9 +428,8 @@ if with_nouveau_vk
   pre_args += '-DHAVE_NVK'
 endif
 
-if with_gallium_tegra and not with_gallium_nouveau
-  error('tegra driver requires nouveau driver')
-endif
+# CloudBSD fork: the tegra-on-nouveau dependency check was removed with the
+# nouveau Gallium driver; NVK runs on libnvrm.
 if with_aco_tests and not with_amd_vk
   error('ACO tests require Radv')
 endif
@@ -848,7 +857,7 @@ endforeach
 
 _va_drivers = [
   with_gallium_d3d12_video,
-  with_gallium_nouveau,
+  # CloudBSD fork: nouveau Gallium VA driver removed; NVK runs on libnvrm.
   with_gallium_r600,
   with_gallium_radeonsi,
   with_gallium_virgl,
@@ -857,7 +866,9 @@ _va_drivers = [
 allow_fallback_for_libva = get_option('allow-fallback-for').contains('libva')
 _va = get_option('gallium-va') \
   .require(_va_drivers.contains(true),
-           error_message : 'VA state tracker requires at least one of the following gallium drivers: r600, radeonsi, nouveau, d3d12 (with option gallium-d3d12-video), virgl.')
+           # CloudBSD fork: nouveau was removed from the VA driver list; NVK
+           # runs on libnvrm.
+           error_message : 'VA state tracker requires at least one of the following gallium drivers: r600, radeonsi, d3d12 (with option gallium-d3d12-video), virgl.')
 _dep_va_name = host_machine.system() == 'windows' ? 'libva-win32' : 'libva'
 dep_va = dependency(
   _dep_va_name, version : '>= 1.8.0',

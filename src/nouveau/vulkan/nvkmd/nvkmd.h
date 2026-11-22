@@ -378,11 +378,9 @@ struct nvkmd_ctx {
  * an inline wrapper in case we want to move something into "core" NVKMD.
  */
 
-VkResult MUST_CHECK
-nvkmd_try_create_pdev_for_drm(struct _drmDevice *drm_device,
-                              struct vk_object_base *log_obj,
-                              enum nvk_debug debug_flags,
-                              struct nvkmd_pdev **pdev_out);
+/* CloudBSD fork: nouveau DRM physical-device creation removed; NVK runs on
+ * libnvrm.
+ */
 
 static inline void
 nvkmd_pdev_destroy(struct nvkmd_pdev *pdev)

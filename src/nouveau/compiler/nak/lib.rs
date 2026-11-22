@@ -41,11 +41,6 @@ mod spill_values;
 mod ssa_value;
 mod to_cssa;
 
-#[cfg(test)]
-mod hw_tests;
-
-#[cfg(test)]
-mod hw_runner;
-
+// CloudBSD fork: nouveau hardware-test modules removed; NVK runs on libnvrm.
 #[cfg(test)]
 mod nvdisasm_tests;

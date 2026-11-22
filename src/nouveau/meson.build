@@ -2,17 +2,14 @@
 # SPDX-License-Identifier: MIT
 
 subdir('headers')
-subdir('drm')
-subdir('winsys')
+# CloudBSD fork: nouveau DRM nvif headers removed; NVK runs on libnvrm.
+# CloudBSD fork: nouveau winsys removed; NVK runs on libnvrm.
 if with_nouveau_vk
   subdir('rust')
   subdir('nil')
   subdir('compiler')
 endif
-if with_tools.contains('drm-shim')
-  subdir('drm-shim')
-endif
-
+# CloudBSD fork: nouveau DRM shim removed; NVK runs on libnvrm.
 if with_nouveau_vk
   subdir('cubin')
   subdir('mme')

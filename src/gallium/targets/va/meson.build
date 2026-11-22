@@ -73,7 +73,8 @@ else
     link_whole : [libva_st],
     link_with : link_with_libva_gallium,
     dependencies : [
-      dep_libdrm, driver_r600, driver_radeonsi, driver_nouveau, driver_d3d12, driver_virgl,
+      dep_libdrm, driver_r600, driver_radeonsi, driver_d3d12, driver_virgl,
+      # CloudBSD fork: nouveau Gallium dependency removed; NVK runs on libnvrm.
       idep_mesautil,
     ],
     link_depends : va_link_depends,
@@ -84,7 +85,9 @@ else
 
   foreach d : [[with_gallium_r600, 'r600'],
               [with_gallium_radeonsi, 'radeonsi'],
-              [with_gallium_nouveau, 'nouveau'],
+              # CloudBSD fork: nouveau Gallium VA target removed; NVK runs on
+              # libnvrm.
+
               [with_gallium_virgl, 'virtio_gpu'],
               [with_gallium_d3d12_video, 'd3d12']]
     if d[0]

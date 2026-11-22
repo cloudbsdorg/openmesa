@@ -4,9 +4,7 @@
  */
 
 #include "nvkmd.h"
-#ifndef NVK_KMD_NVRM
-#include "nouveau/nvkmd_nouveau.h"
-#endif
+/* CloudBSD fork: nouveau nvkmd backend include removed; NVK runs on libnvrm. */
 #include "nv_push.h"
 #include "util/cache_ops.h"
 #include "util/u_math.h"
@@ -84,20 +82,9 @@ nvkmd_mem_init(struct nvkmd_dev *dev,
    simple_mtx_init(&mem->map_mutex, mtx_plain);
 }
 
-VkResult
-nvkmd_try_create_pdev_for_drm(struct _drmDevice *drm_device,
-                              struct vk_object_base *log_obj,
-                              enum nvk_debug debug_flags,
-                              struct nvkmd_pdev **pdev_out)
-{
-#ifdef NVK_KMD_NVRM
-   /* The nvrm backend enumerates through libnvrm, never through DRM. */
-   return VK_ERROR_INCOMPATIBLE_DRIVER;
-#else
-   return nvkmd_nouveau_try_create_pdev(drm_device, log_obj,
-                                        debug_flags, pdev_out);
-#endif
-}
+/* CloudBSD fork: nouveau DRM physical-device creation removed; NVK runs on
+ * libnvrm and enumerates through its backend.
+ */
 
 VkResult MUST_CHECK
 nvkmd_dev_alloc_mem(struct nvkmd_dev *dev,

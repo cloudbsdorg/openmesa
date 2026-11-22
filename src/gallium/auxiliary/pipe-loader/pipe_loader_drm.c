@@ -70,7 +70,7 @@ static const struct drm_driver_descriptor *driver_descriptors[] = {
    &i915_driver_descriptor,
    &iris_driver_descriptor,
    &crocus_driver_descriptor,
-   &nouveau_driver_descriptor,
+   /* CloudBSD fork: the nouveau GL driver descriptor is removed with the driver. */
    &r300_driver_descriptor,
    &r600_driver_descriptor,
    &radeonsi_driver_descriptor,

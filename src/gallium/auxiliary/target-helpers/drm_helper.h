@@ -120,23 +120,9 @@ DRM_DRIVER_DESCRIPTOR(crocus, crocus_driconf, ARRAY_SIZE(crocus_driconf),
 DRM_DRIVER_DESCRIPTOR_STUB(crocus)
 #endif
 
-#ifdef GALLIUM_NOUVEAU
-#include "nouveau/drm/nouveau_drm_public.h"
-
-static struct pipe_screen *
-pipe_nouveau_create_screen(int fd, const struct pipe_screen_config *config)
-{
-   struct pipe_screen *screen;
-
-   screen = nouveau_drm_screen_create(fd);
-   return screen ? debug_screen_wrap(screen) : NULL;
-}
-DRM_DRIVER_DESCRIPTOR(nouveau, NULL, 0)
-
-#else
-DRM_DRIVER_DESCRIPTOR_STUB(nouveau)
-#endif
-
+/* CloudBSD fork: nouveau Gallium screen creation removed; NVK runs on
+ * libnvrm.
+ */
 #if defined(GALLIUM_VC4) || defined(GALLIUM_V3D)
 const driOptionDescription v3d_driconf[] = {
       #include "v3d/driinfo_v3d.h"

@@ -86,8 +86,10 @@ option(
   choices : [
     'all', 'auto',
     'asahi', 'crocus', 'd3d12', 'ethosu', 'etnaviv', 'freedreno', 'i915', 'iris',
-    'lima', 'llvmpipe', 'nouveau', 'panfrost', 'r300', 'r600', 'radeonsi',
-    'rocket', 'softpipe', 'svga', 'tegra', 'v3d', 'vc4', 'virgl', 'zink',
+    # CloudBSD fork: nouveau and dependent tegra Gallium choices removed; NVK
+    # runs on libnvrm.
+    'lima', 'llvmpipe', 'panfrost', 'r300', 'r600', 'radeonsi',
+    'rocket', 'softpipe', 'svga', 'v3d', 'vc4', 'virgl', 'zink',
   ],
   description : 'List of gallium drivers to build. If this is set to auto ' +
                 'all drivers applicable to the target OS/architecture ' +
@@ -790,14 +792,14 @@ option(
                 'Can be extracted with readelf -x .note.gnu.build-id'
 )
 
-# CloudBSD private fork (FORK-NOTES.md): the NVK kernel-mode-driver backend.
+# CloudBSD fork: nouveau kernel driver backend removed; NVK runs on libnvrm.
 option(
   'nvk-kmd',
   type : 'combo',
-  value : 'nouveau',
-  choices : ['nouveau', 'nvrm'],
-  description : 'NVK kernel backend: nouveau (DRM) or nvrm (NVIDIA open ' +
-                'RM through libnvrm; CloudBSD fork, stub for now)'
+  value : 'nvrm',
+  choices : ['nvrm'],
+  description : 'NVK kernel backend: nvrm (NVIDIA open RM through libnvrm; ' +
+                'CloudBSD fork, stub for now)'
 )
 
 option(

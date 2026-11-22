@@ -630,10 +630,13 @@ PUBLIC const __DRIextension **__driDriverGetExtensions_kms_swrast(void)
    return __driDriverExtensions;
 }
 
+/* CPD-OFF -- upstream Mesa: one entry point per DRM driver name */
 DEFINE_LOADER_DRM_ENTRYPOINT(i915)
 DEFINE_LOADER_DRM_ENTRYPOINT(iris)
 DEFINE_LOADER_DRM_ENTRYPOINT(crocus)
-DEFINE_LOADER_DRM_ENTRYPOINT(nouveau)
+/* CloudBSD fork: nouveau Gallium DRIL entry point removed; NVK runs on
+ * libnvrm.
+ */
 DEFINE_LOADER_DRM_ENTRYPOINT(r300)
 DEFINE_LOADER_DRM_ENTRYPOINT(r600)
 DEFINE_LOADER_DRM_ENTRYPOINT(radeonsi)
@@ -687,3 +690,4 @@ DEFINE_LOADER_DRM_ENTRYPOINT(zynqmp_dpsub)
 DEFINE_LOADER_DRM_ENTRYPOINT(lima)
 DEFINE_LOADER_DRM_ENTRYPOINT(d3d12)
 DEFINE_LOADER_DRM_ENTRYPOINT(zink)
+/* CPD-ON */

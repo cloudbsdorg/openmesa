@@ -161,14 +161,11 @@ nvk_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
    nvk_init_experimental_flags(instance);
    nvk_init_dri_options(instance);
 
-#ifdef NVK_KMD_NVRM
-   /* GPUs come from the RM through libnvrm, not from DRM devices. */
+   /* CloudBSD fork: nouveau DRM physical-device creation removed; NVK runs on
+    * libnvrm, so GPUs come from the RM rather than DRM devices.
+    */
    instance->vk.physical_devices.enumerate =
       nvk_enumerate_nvrm_physical_devices;
-#else
-   instance->vk.physical_devices.try_create_for_drm =
-      nvk_create_drm_physical_device;
-#endif
    instance->vk.physical_devices.destroy = nvk_physical_device_destroy;
 
    const struct build_id_note *note =

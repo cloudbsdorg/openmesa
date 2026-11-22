@@ -96,34 +96,21 @@ nvk_files = files(
   'nvkmd/nvkmd.h',
 )
 
-# CloudBSD private fork (FORK-NOTES.md): one nvkmd backend per build.
-nvk_kmd = get_option('nvk-kmd')
-if nvk_kmd == 'nvrm'
-  nvk_files += files(
-    'nvkmd/nvrm/nvkmd_nvrm.h',
-    'nvkmd/nvrm/nvkmd_nvrm_msg.h',
-    'nvkmd/nvrm/nvkmd_nvrm_pdev.c',
-  )
-  _nvrm_inc = get_option('nvrm-include-dir')
-  _nvrm_lib = get_option('nvrm-lib-dir')
-  if _nvrm_inc == '' or _nvrm_lib == ''
-    error('nvk-kmd=nvrm needs nvrm-include-dir and nvrm-lib-dir')
-  endif
-  dep_nvrm = declare_dependency(
-    compile_args : ['-I' + _nvrm_inc, '-DNVK_KMD_NVRM=1'],
-    dependencies : cc.find_library('nvrm', dirs : [_nvrm_lib], required : true),
-  )
-else
-  nvk_files += files(
-    'nvkmd/nouveau/nvkmd_nouveau.h',
-    'nvkmd/nouveau/nvkmd_nouveau_ctx.c',
-    'nvkmd/nouveau/nvkmd_nouveau_dev.c',
-    'nvkmd/nouveau/nvkmd_nouveau_mem.c',
-    'nvkmd/nouveau/nvkmd_nouveau_pdev.c',
-    'nvkmd/nouveau/nvkmd_nouveau_va.c',
-  )
-  dep_nvrm = null_dep
+# CloudBSD fork: nouveau nvkmd backend removed; NVK runs on libnvrm.
+nvk_files += files(
+  'nvkmd/nvrm/nvkmd_nvrm.h',
+  'nvkmd/nvrm/nvkmd_nvrm_msg.h',
+  'nvkmd/nvrm/nvkmd_nvrm_pdev.c',
+)
+_nvrm_inc = get_option('nvrm-include-dir')
+_nvrm_lib = get_option('nvrm-lib-dir')
+if _nvrm_inc == '' or _nvrm_lib == ''
+  error('nvk-kmd=nvrm needs nvrm-include-dir and nvrm-lib-dir')
 endif
+dep_nvrm = declare_dependency(
+  compile_args : ['-I' + _nvrm_inc, '-DNVK_KMD_NVRM=1'],
+  dependencies : cc.find_library('nvrm', dirs : [_nvrm_lib], required : true),
+)
 
 nvkcl_files = files(
   'cl/nvk_query.cl',
@@ -187,7 +174,7 @@ nvk_deps = [
   idep_mesautil,
   idep_nouveau_cubin,
   idep_nouveau_mme,
-  idep_nouveau_ws,
+  # CloudBSD fork: nouveau winsys removed; NVK runs on libnvrm.
   idep_nvidia_headers,
   idep_vulkan_runtime,
   idep_vulkan_runtime_headers,
@@ -321,16 +308,10 @@ libnvk = static_library(
   gnu_symbol_visibility : 'hidden',
 )
 
-# CloudBSD fork: user-visible names say nvk_nvrm, not nouveau, when nvk_kmd is nvrm
-if nvk_kmd == 'nvrm'
-  _nvk_lib_name = 'vulkan_nvk_nvrm'
-  _nvk_icd_name = 'nvk_nvrm_icd.' + vulkan_manifest_suffix
-  _nvk_dev_icd_name = 'nvk_nvrm_devenv_icd.@0@.json'.format(host_machine.cpu())
-else
-  _nvk_lib_name = 'vulkan_nouveau'
-  _nvk_icd_name = 'nouveau_icd.' + vulkan_manifest_suffix
-  _nvk_dev_icd_name = 'nouveau_devenv_icd.@0@.json'.format(host_machine.cpu())
-endif
+# CloudBSD fork: nouveau ICD names removed; NVK runs on libnvrm as nvk_nvrm.
+_nvk_lib_name = 'vulkan_nvk_nvrm'
+_nvk_icd_name = 'nvk_nvrm_icd.' + vulkan_manifest_suffix
+_nvk_dev_icd_name = 'nvk_nvrm_devenv_icd.@0@.json'.format(host_machine.cpu())
 
 libvulkan_nouveau = shared_library(
   _nvk_lib_name,

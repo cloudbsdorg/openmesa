@@ -50,15 +50,12 @@ _nak_bindings_rs = rust.bindgen(
     bindgen_output_args,
     compiler_rs_bindgen_blocklist,
     '--raw-line', 'use compiler::bindings::*;',
-    '--allowlist-type', 'drm.*',
+    # CloudBSD fork: nouveau winsys and DRM bindgen allowlists removed; NVK
+    # runs on libnvrm.
     '--allowlist-type', 'nak_.*',
-    '--allowlist-type', 'nouveau_ws_.*',
-    '--allowlist-var', 'DRM_.*',
     '--allowlist-var', 'NAK_.*',
     '--allowlist-var', 'NVIDIA_VENDOR_ID',
-    '--allowlist-function', 'drm.*',
     '--allowlist-function', 'nak_.*',
-    '--allowlist-function', 'nouveau_ws_.*',
     # provided through compiler::bindings::*
     '--blocklist-type', 'glsl_.*',
     '--blocklist-type', 'pipe_format.*',
@@ -66,8 +63,8 @@ _nak_bindings_rs = rust.bindgen(
     '--with-derive-default',
   ],
   dependencies : [
-    dep_libdrm,
-    idep_nouveau_ws,
+    # CloudBSD fork: nouveau winsys and libdrm dependencies removed; NVK runs
+    # on libnvrm.
     libnak_deps,
   ],
 )
@@ -117,21 +114,20 @@ _libnak_rs = static_library(
 # with the sanitizers because meson doesn't know to pass -fsanitize to the
 # Rust linker.  See also https://github.com/mesonbuild/meson/issues/11741
 #
-# Also, don't build on Android because we do cross-builds and, unlike most
-# tests, these depend on libdrm and that confuses the build system.
+# Also, don't build on Android because we do cross-builds.
 if with_tests and get_option('b_sanitize') == 'none' and not with_platform_android
   rust.test(
     'nak',
     _libnak_rs,
     args : [
-      # Don't run HW or nvdisasm tests by default
-      '--skip', 'hw_tests::',
+      # CloudBSD fork: nouveau hardware tests removed; NVK runs on libnvrm.
+      # Don't run nvdisasm tests by default.
       '--skip', 'nvdisasm_tests::',
     ],
     suite : ['nouveau'],
     dependencies : [
-      dep_libdrm,
-      idep_nouveau_ws,
+      # CloudBSD fork: nouveau winsys and libdrm test dependencies removed;
+      # NVK runs on libnvrm.
       idep_compiler.partial_dependency(link_args : true, links : true),
       idep_mesautil.partial_dependency(link_args : true, links : true),
       idep_nv_push_rs,
