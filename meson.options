@@ -790,6 +790,30 @@ option(
                 'Can be extracted with readelf -x .note.gnu.build-id'
 )
 
+# CloudBSD private fork (FORK-NOTES.md): the NVK kernel-mode-driver backend.
+option(
+  'nvk-kmd',
+  type : 'combo',
+  value : 'nouveau',
+  choices : ['nouveau', 'nvrm'],
+  description : 'NVK kernel backend: nouveau (DRM) or nvrm (NVIDIA open ' +
+                'RM through libnvrm; CloudBSD fork, stub for now)'
+)
+
+option(
+  'nvrm-include-dir',
+  type : 'string',
+  value : '',
+  description : 'Directory holding nvrm/nvrm.h (with nvk-kmd=nvrm)'
+)
+
+option(
+  'nvrm-lib-dir',
+  type : 'string',
+  value : '',
+  description : 'Directory holding libnvrm.so (with nvk-kmd=nvrm)'
+)
+
 option(
   'min-windows-version',
   type : 'integer',

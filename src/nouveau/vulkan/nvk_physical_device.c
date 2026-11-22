@@ -16,7 +16,11 @@
 #include "nvk_shader.h"
 #include "nvk_wsi.h"
 #include "nvkmd/nvkmd.h"
+#ifdef NVK_KMD_NVRM
+#include "nvkmd/nvrm/nvkmd_nvrm.h"
+#else
 #include "nvkmd/nouveau/nvkmd_nouveau.h"
+#endif
 #include "git_sha1.h"
 #include "util/detect_os.h"
 #include "util/disk_cache.h"
@@ -31,7 +35,10 @@
 #include "vk_shader_module.h"
 #include "vulkan/wsi/wsi_common.h"
 
+/* FreeBSD has major() and minor() in sys/types.h (from graphics/mesa-devel, #2309). */
+#ifdef MAJOR_IN_SYSMACROS
 #include <sys/sysmacros.h>
+#endif
 
 #include "nv_push.h"
 #include "cl90c0.h"
@@ -1528,19 +1535,14 @@ nvk_get_vram_heap_available(struct nvk_physical_device *pdev)
    return pdev->info.vram_size_B - used;
 }
 
-VkResult
-nvk_create_drm_physical_device(struct vk_instance *_instance,
-                               struct _drmDevice *drm_device,
-                               struct vk_physical_device **pdev_out)
+/* #lizard forgives -- upstream NVK physical-device setup, only renamed in this fork */
+/* Takes ownership of nvkmd: it is destroyed on failure. */
+static VkResult
+nvk_create_physical_device_for_nvkmd(struct nvk_instance *instance,
+                                     struct nvkmd_pdev *nvkmd,
+                                     struct vk_physical_device **pdev_out)
 {
-   struct nvk_instance *instance = (struct nvk_instance *)_instance;
    VkResult result;
-
-   struct nvkmd_pdev *nvkmd;
-   result = nvkmd_try_create_pdev_for_drm(drm_device, &instance->vk.base,
-                                          instance->debug_flags, &nvkmd);
-   if (result != VK_SUCCESS)
-      return result;
 
    /* We don't support anything pre-Kepler */
    if (nvkmd->dev_info.cls_eng3d < KEPLER_A) {
@@ -1660,7 +1662,16 @@ nvk_create_drm_physical_device(struct vk_instance *_instance,
          .heapIndex = vram_heap_idx,
       };
 
-      if (pdev->info.cls_eng3d >= MAXWELL_A) {
+#ifdef NVK_KMD_NVRM
+      /* CloudBSD fork: the nvrm backend reports a BAR only when CPU maps of
+       * it allow any access (bar_size_B == 0 otherwise, for example on
+       * Device-nGnRE BAR mappings), so VRAM is host-visible only then.
+       */
+      const bool vram_host_visible = pdev->info.bar_size_B > 0;
+#else
+      const bool vram_host_visible = true;
+#endif
+      if (pdev->info.cls_eng3d >= MAXWELL_A && vram_host_visible) {
          pdev->mem_types[pdev->mem_type_count++] = (VkMemoryType) {
             .propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
@@ -1759,6 +1770,78 @@ fail_nvkmd:
    nvkmd_pdev_destroy(nvkmd);
    return result;
 }
+
+VkResult
+nvk_create_drm_physical_device(struct vk_instance *_instance,
+                               struct _drmDevice *drm_device,
+                               struct vk_physical_device **pdev_out)
+{
+   struct nvk_instance *instance = (struct nvk_instance *)_instance;
+
+   struct nvkmd_pdev *nvkmd;
+   VkResult result = nvkmd_try_create_pdev_for_drm(drm_device,
+                                                   &instance->vk.base,
+                                                   instance->debug_flags,
+                                                   &nvkmd);
+   if (result != VK_SUCCESS)
+      return result;
+
+   return nvk_create_physical_device_for_nvkmd(instance, nvkmd, pdev_out);
+}
+
+#ifdef NVK_KMD_NVRM
+VkResult
+nvk_enumerate_nvrm_physical_devices(struct vk_instance *_instance)
+{
+   struct nvk_instance *instance = (struct nvk_instance *)_instance;
+
+   struct nvkmd_nvrm_enum *nvenum;
+   VkResult result = nvkmd_nvrm_enum_open(&instance->vk.base,
+                                          instance->debug_flags, &nvenum);
+   if (result != VK_SUCCESS)
+      return result;
+
+   const uint32_t count = nvkmd_nvrm_enum_count(nvenum);
+   for (uint32_t i = 0; i < count; i++) {
+      struct nvkmd_pdev *nvkmd;
+      result = nvkmd_nvrm_enum_create_pdev(nvenum, i, &instance->vk.base,
+                                           instance->debug_flags, &nvkmd);
+      if (result == VK_ERROR_INCOMPATIBLE_DRIVER)
+         continue;
+      if (result != VK_SUCCESS)
+         break;
+
+      struct vk_physical_device *vk_pdev;
+      result = nvk_create_physical_device_for_nvkmd(instance, nvkmd, &vk_pdev);
+      if (result == VK_ERROR_INCOMPATIBLE_DRIVER)
+         continue;
+      if (result != VK_SUCCESS)
+         break;
+
+      list_addtail(&vk_pdev->link, &instance->vk.physical_devices.list);
+   }
+
+   /* Each pdev holds its own reference on the enumeration. */
+   nvkmd_nvrm_enum_unref(nvenum);
+
+   /* An incompatible GPU is skipped, as the DRM path does. */
+   if (result == VK_ERROR_INCOMPATIBLE_DRIVER)
+      result = VK_SUCCESS;
+
+   /* On failure the runtime enumerates again on the next call, so drop what
+    * was added, as the DRM path does.
+    */
+   if (result != VK_SUCCESS) {
+      list_for_each_entry_safe(struct vk_physical_device, vk_pdev,
+                               &instance->vk.physical_devices.list, link) {
+         list_del(&vk_pdev->link);
+         nvk_physical_device_destroy(vk_pdev);
+      }
+   }
+
+   return result;
+}
+#endif
 
 void
 nvk_physical_device_destroy(struct vk_physical_device *vk_pdev)

@@ -4,7 +4,9 @@
  */
 
 #include "nvkmd.h"
+#ifndef NVK_KMD_NVRM
 #include "nouveau/nvkmd_nouveau.h"
+#endif
 #include "nv_push.h"
 #include "util/cache_ops.h"
 #include "util/u_math.h"
@@ -88,8 +90,13 @@ nvkmd_try_create_pdev_for_drm(struct _drmDevice *drm_device,
                               enum nvk_debug debug_flags,
                               struct nvkmd_pdev **pdev_out)
 {
+#ifdef NVK_KMD_NVRM
+   /* The nvrm backend enumerates through libnvrm, never through DRM. */
+   return VK_ERROR_INCOMPATIBLE_DRIVER;
+#else
    return nvkmd_nouveau_try_create_pdev(drm_device, log_obj,
                                         debug_flags, pdev_out);
+#endif
 }
 
 VkResult MUST_CHECK

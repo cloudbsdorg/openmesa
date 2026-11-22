@@ -92,15 +92,38 @@ nvk_files = files(
   'nvk_wsi.h',
   'layers/nvk_app_workarounds.c',
   'layers/nvk_app_workarounds.h',
-  'nvkmd/nouveau/nvkmd_nouveau.h',
-  'nvkmd/nouveau/nvkmd_nouveau_ctx.c',
-  'nvkmd/nouveau/nvkmd_nouveau_dev.c',
-  'nvkmd/nouveau/nvkmd_nouveau_mem.c',
-  'nvkmd/nouveau/nvkmd_nouveau_pdev.c',
-  'nvkmd/nouveau/nvkmd_nouveau_va.c',
   'nvkmd/nvkmd.c',
   'nvkmd/nvkmd.h',
 )
+
+# CloudBSD private fork (FORK-NOTES.md): one nvkmd backend per build.
+nvk_kmd = get_option('nvk-kmd')
+if nvk_kmd == 'nvrm'
+  nvk_files += files(
+    'nvkmd/nvrm/nvkmd_nvrm.h',
+    'nvkmd/nvrm/nvkmd_nvrm_msg.h',
+    'nvkmd/nvrm/nvkmd_nvrm_pdev.c',
+  )
+  _nvrm_inc = get_option('nvrm-include-dir')
+  _nvrm_lib = get_option('nvrm-lib-dir')
+  if _nvrm_inc == '' or _nvrm_lib == ''
+    error('nvk-kmd=nvrm needs nvrm-include-dir and nvrm-lib-dir')
+  endif
+  dep_nvrm = declare_dependency(
+    compile_args : ['-I' + _nvrm_inc, '-DNVK_KMD_NVRM=1'],
+    dependencies : cc.find_library('nvrm', dirs : [_nvrm_lib], required : true),
+  )
+else
+  nvk_files += files(
+    'nvkmd/nouveau/nvkmd_nouveau.h',
+    'nvkmd/nouveau/nvkmd_nouveau_ctx.c',
+    'nvkmd/nouveau/nvkmd_nouveau_dev.c',
+    'nvkmd/nouveau/nvkmd_nouveau_mem.c',
+    'nvkmd/nouveau/nvkmd_nouveau_pdev.c',
+    'nvkmd/nouveau/nvkmd_nouveau_va.c',
+  )
+  dep_nvrm = null_dep
+endif
 
 nvkcl_files = files(
   'cl/nvk_query.cl',
@@ -172,6 +195,7 @@ nvk_deps = [
   idep_vulkan_util_headers,
   idep_vulkan_wsi,
   idep_vulkan_wsi_headers,
+  dep_nvrm,
 ]
 
 nvk_include_directories = [
@@ -196,7 +220,10 @@ nvk_bindings_rs_gen = rust.bindgen(
     '--allowlist-function', 'vk_buffer_address',
     '--allowlist-var', '.*SUBC.*',
   ],
-  include_directories : include_directories('.'),
+  # Mesa's own Vulkan headers must win over a vulkan-headers package in
+  # /usr/local/include, which is older than the registry this tree generates
+  # from (from graphics/mesa-devel, #2309).
+  include_directories : [include_directories('.'), inc_include],
   dependencies : nvk_deps,
 )
 

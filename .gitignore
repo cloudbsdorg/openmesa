@@ -7,3 +7,5 @@
 /build
 .venv/
 *.mda.tar
+# CloudBSD fork (FORK-NOTES.md): the default build directory of make build
+/cloudbsd-build
