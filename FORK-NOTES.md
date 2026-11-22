@@ -12,8 +12,17 @@ work.
 | `upstream/26.3.1` | Mesa 26.3.1 exactly as released (tag `mesa-26.3.1`, history from gitlab.freedesktop.org/mesa/mesa). Never changed. |
 | `cloudbsd/26.3` | Our work on top of 26.3.1. |
 
-The files at the top of the tree named `AGENTS.md`, `CLAUDE.md` and
-`GEMINI.md` are Mesa's own and stay unedited.
+About `src/nouveau`: the directory name is Mesa's; nothing here uses the
+nouveau kernel driver. The directory keeps its name so that rebasing on
+upstream stays cheap.
+
+## Agent instructions
+
+`AGENTS.md` at the top of the tree is **ours**, and `CLAUDE.md` and
+`GEMINI.md` link to it, the same way upstream links them. Mesa's own text is
+kept byte for byte in `UPSTREAM-AGENTS.md`. `UPSTREAM-CLAUDE.md` and
+`UPSTREAM-GEMINI.md` are byte-identical copies of it: upstream they are links,
+but our commit gate does not scan links.
 
 ## Why we fork
 
@@ -31,26 +40,30 @@ The files at the top of the tree named `AGENTS.md`, `CLAUDE.md` and
 
 ## The AI policy in Mesa's AGENTS.md, and how this fork treats it
 
-Mesa's `AGENTS.md` says that AI agents must not contribute to the Mesa
-project, must label AI-written commits, and must not change some directories,
-`src/nouveau` among them. Mesa is MIT-licensed. Mark LaPointe (CloudBSD)
-decided on 2026-11-22 (Track #2379) that the policy governs contributions to
-the Mesa project and not this private fork, which is never submitted. In this
-fork:
+Mesa's `AGENTS.md` (now `UPSTREAM-AGENTS.md`) says that AI agents must not
+contribute to the Mesa project, must label AI-written commits, and must not
+change some directories, `src/nouveau` among them. Mesa is MIT-licensed.
 
-- agents write the nvkmd `nvrm` backend and any other change under
-  `src/nouveau` (NVK and NAK), and the `graphics/mesa-devel` patches;
-- commits follow CloudBSD's own rules (Track reference, review gate, author
-  Mark LaPointe), and carry no `Generated-by` or other tool trailers;
-- the work is never offered upstream. If any of it is ever to go to Mesa, a
-  person rewrites and submits it under Mesa's rules, and that is a separate
-  decision.
+Mark LaPointe (CloudBSD) made two decisions on 2026-11-22 (Track #2379):
+
+- **Our own fork.** The upstream policy governs contributions to the Mesa
+  project, not this private fork, which is never submitted.
+- **Our own agent instructions** ("highjack agents.md for every agent"). In
+  this fork our `AGENTS.md` governs every agent, so that agents given work
+  here, such as opencode rounds, follow CloudBSD's rules and not the upstream
+  file. Before this, the upstream file made the opencode model decline every
+  `src/nouveau` change.
+
+What agents may do here, and the rules they follow, are stated once, in
+`AGENTS.md`. If any patch is ever to leave this fork, `UPSTREAM-AGENTS.md`
+applies to it.
 
 ## Building
 
 `make help` lists the targets. `make build` builds NVK with the `nvrm`
-backend against a libnvrm tree, and `make test` runs `vulkaninfo --summary`
-on libnvrm's fake backend, so no GPU is needed. See `cloudbsd/README.md`.
+backend against a libnvrm tree. `make test` runs the device probe and
+`vulkaninfo --summary` on libnvrm's fake backend, so no GPU is needed. See
+`cloudbsd/README.md`.
 
 ## Status of the nvrm backend
 
