@@ -58,6 +58,42 @@ What agents may do here, and the rules they follow, are stated once, in
 `AGENTS.md`. If any patch is ever to leave this fork, `UPSTREAM-AGENTS.md`
 applies to it.
 
+## The nouveau kernel-driver code is removed
+
+Mark LaPointe decided on 2026-11-22 (Track #2379): delete everything that
+talks to the nouveau kernel driver, and keep NVK, NAK and the nvrm backend.
+
+Deleted from the tree:
+- the nvkmd nouveau backend, the nouveau winsys (`src/nouveau/winsys`), the
+  nvif headers (`src/nouveau/drm`), the nouveau drm-shim, the MME method
+  dumper, `src/util/drm_is_nouveau.h` and `include/drm-uapi/nouveau_drm.h`;
+- the NAK hardware runner and tests, and the MME hardware tests. These ran
+  on a GPU through that winsys. Their build entries and module lines were
+  removed in commit 4b21c1c37f2.
+
+Removed from the build but not yet from the tree: the gallium nouveau GL
+driver and its winsys (`src/gallium/drivers/nouveau`,
+`src/gallium/winsys/nouveau`). Nothing builds them since commit
+4b21c1c37f2. Deleting their files is a 131k-line change, which is more than
+one review by the commit gate can read, so how to commit it is still open
+on Track #2379.
+
+Kept: NVK, NAK, nil, MME, cubin and the hardware headers in
+`src/nouveau/headers`.
+
+The guard is the check "no nouveau uAPI in the build" in `cloudbsd/make.sh`,
+run by `make test`. It fails when `include/drm-uapi/nouveau_drm.h` exists,
+when any object was compiled with a nouveau uAPI, nvif or libdrm-nouveau
+header, or when the build graph has a nouveau winsys target. When it fails,
+find what pulled the header or target back in with `ninja -t deps` or
+`ninja -t targets all`, and remove that dependency.
+
+What is lost for now: the hardware tests were the only check against real
+hardware for the NAK constant folder, the MME macro simulators and the other
+NAK hardware tests. A hardware runner on libnvrm can replace them once
+libnvrm has channels (S3, #2437). Until then, only the simulation and
+builder tests run.
+
 ## Building
 
 `make help` lists the targets. `make build` builds NVK with the `nvrm`
