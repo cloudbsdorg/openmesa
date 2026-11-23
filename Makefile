@@ -18,6 +18,10 @@ UPSTREAM_BUILD = meson setup <builddir> && ninja -C <builddir>
 NVRM_SRC =
 # open-gpu-kernel-modules headers for libnvrm; empty lets libnvrm pick.
 OGKM =
+# LLVM 19 llvm-config to build with; empty means /usr/local/bin/llvm-config19.
+# The value is exported to the environment, never written into the recipe:
+# a value that is not a path is refused by make.sh.
+LLVM_CONFIG ?=
 # Where the build goes; empty means ./cloudbsd-build in this checkout.
 WORK =
 JOBS =
@@ -27,6 +31,11 @@ JSON = 0
 
 DRIVER = sh cloudbsd/make.sh
 DRIVER_ENV = MK_NVRM_SRC="$(NVRM_SRC)" MK_OGKM="$(OGKM)" MK_WORK="$(WORK)" MK_JOBS="$(JOBS)" MK_YES="$(YES)" MK_ASSUME_YES="$(ASSUME_YES)" MK_JSON="$(JSON)" MK_PURPOSE="$(REPO_PURPOSE)"
+
+# The llvm-config travels in the environment: a value that holds a quote or
+# a shell word is never read as shell source by the recipe.  The export
+# carries a value, because bmake takes no bare "export variable".
+export LLVM_CONFIG = $(LLVM_CONFIG)
 
 help:
 	@printf '%s\n' \
@@ -51,11 +60,15 @@ help:
 		"                  (default \$$HOME/work/gb10/nvidia-gb10-freebsd)" \
 		"  WORK=dir        build directory (default ./cloudbsd-build)" \
 		"  JOBS=n          parallel jobs (default: half of hw.ncpu)" \
+		"  LLVM_CONFIG=path  LLVM 19 llvm-config to build with" \
+		"                  (default /usr/local/bin/llvm-config19; the" \
+		"                  value must be an absolute path to an" \
+		"                  executable file)" \
 		"  YES=1           do it without asking (install-deps)" \
 		"  JSON=1          preflight writes the --json contract" \
 		"" \
-		"PATH, PYTHONPATH, PKG_CONFIG_PATH and LLVM_CONFIG from the environment" \
-		"are used as they are." \
+		"PATH, PYTHONPATH and PKG_CONFIG_PATH from the environment are used" \
+		"as they are." \
 		"Upstream build: $(UPSTREAM_BUILD)"
 
 .PHONY: help purpose preflight deps install-deps configure build test clean

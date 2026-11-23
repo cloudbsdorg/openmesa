@@ -27,6 +27,19 @@ installed under `WORK/prefix`. `make test` runs on libnvrm's **fake backend**
 and no nvidia driver. It also fails if an installed file name, the installed
 ICD or the program output says "nouveau".
 
+The build needs **LLVM 19**: meson takes `llvm-config23` when both LLVMs are
+installed and then cannot find LLVMSPIRVLib. `make.sh` writes a meson native
+file under `WORK` that names the `llvm-config` to use, and puts the
+pkg-config directory of that installation first in `PKG_CONFIG_PATH` (the
+directory comes from `llvm-config --prefix`, so the two always belong to the
+same LLVM). The native file is written at every build, and a build tree that
+was set up with another `llvm-config` is reconfigured with it, so the setting
+is never ignored. Set `LLVM_CONFIG=path` (make) or `MK_LLVM_CONFIG=path`
+(make.sh) to use another one; the default is `/usr/local/bin/llvm-config19`.
+The value must be an absolute path to an executable file: it travels in the
+environment, never in the recipe, and a value that is not a path is refused
+before anything is built.
+
 ## nvk-nvrm-probe
 
 ```

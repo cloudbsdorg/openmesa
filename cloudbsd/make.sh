@@ -13,9 +13,26 @@ top=$(cd "$(dirname "$0")/.." && pwd)
 cmd=${1:-}
 [ $# -gt 0 ] && shift
 
+die() {
+	printf 'make.sh: %s\n' "$*" >&2
+	exit 1
+}
+
+# The value of a setting, with the characters that are not printable shown
+# as a question mark: a value is data and never shell source.
+show_value() {
+	printf '%s' "$1" | tr -c '[:print:]' '?'
+}
+
 nvrm_src=${MK_NVRM_SRC:-$HOME/work/gb10/nvidia-gb10-freebsd}
 work=${MK_WORK:-$top/cloudbsd-build}
 jobs=${MK_JOBS:-}
+# CloudBSD fork: the build needs LLVM 19.  Meson picks llvm-config23 when
+# both are installed and then cannot find LLVMSPIRVLib.  The llvm-config to
+# use is named in a meson native file; LLVM_CONFIG (or MK_LLVM_CONFIG)
+# overrides it.  The value comes from the environment, so it is never read
+# as shell source.
+llvm_config=${LLVM_CONFIG:-${MK_LLVM_CONFIG:-/usr/local/bin/llvm-config19}}
 yes=0
 if [ "${MK_YES:-0}" = 1 ] || [ "${MK_ASSUME_YES:-0}" = 1 ]; then
 	yes=1
@@ -27,12 +44,36 @@ rust rust-bindgen-cli llvm19 libclc-llvm19 spirv-llvm-translator-llvm19 \
 spirv-tools glslang libdrm expat bison vulkan-headers vulkan-loader \
 vulkan-tools"
 TOOLS="git cc meson ninja rustc bindgen python3 pkg-config vulkaninfo"
-USAGE="usage: make.sh <preflight|install-deps|configure|build|test|no-nouveau|no-gallium-nouveau|clean>"
+USAGE="usage: make.sh <preflight|install-deps|configure|configure-tree|build|test|no-nouveau|no-gallium-nouveau|clean>"
 
-die() {
-	printf 'make.sh: %s\n' "$*" >&2
-	exit 1
+# CloudBSD fork: the llvm-config must be the path of an executable file.
+# A value that is not one is refused before anything is built.
+check_llvm_config() {
+	case $llvm_config in
+	/*) ;;
+	*) die "LLVM_CONFIG is not an absolute path: '$(show_value "$llvm_config")'" ;;
+	esac
+	[ -f "$llvm_config" ] ||
+		die "LLVM_CONFIG is not a file: '$(show_value "$llvm_config")'"
+	[ -x "$llvm_config" ] ||
+		die "LLVM_CONFIG is not executable: '$(show_value "$llvm_config")'"
+	if printf '%s' "$llvm_config" | grep -q "['\"]"; then
+		die "LLVM_CONFIG holds a quote: '$(show_value "$llvm_config")'"
+	fi
+	[ "$(printf '%s' "$llvm_config" | wc -l)" -eq 0 ] ||
+		die "LLVM_CONFIG holds a newline: '$(show_value "$llvm_config")'"
+	# CloudBSD fork: the build needs LLVM 19, because LLVMSPIRVLib comes
+	# from that installation.  A llvm-config of another version is
+	# refused with a message that says what is needed.
+	version=$("$llvm_config" --version 2>/dev/null) || version=''
+	case $version in
+	19*) ;;
+	'') ;;
+	*) die "LLVM_CONFIG is LLVM $(show_value "$version"); this build needs LLVM 19" ;;
+	esac
 }
+
+check_llvm_config
 
 # Builds and tests run as a normal user: the Python and meson scripts of the
 # tree never run as root, and no root-owned files land in the build tree.
@@ -65,6 +106,65 @@ libnvrm_dir() { printf '%s\n' "$work/libnvrm"; }
 mesa_dir() { printf '%s\n' "$work/mesa"; }
 icd_json() { printf '%s\n' "$work/prefix/share/vulkan/icd.d/nvk_nvrm_icd.$(arch_name).json"; }
 probe_bin() { printf '%s\n' "$work/probe/nvk-nvrm-probe"; }
+native_file() { printf '%s\n' "$work/native-llvm.ini"; }
+
+# CloudBSD fork: write the meson native file that names the llvm-config the
+# build must use.  Meson would otherwise take llvm-config23 and fail to find
+# LLVMSPIRVLib.  The file is written at every build, so that the build tree
+# always knows which llvm-config it was set up with.
+write_native_file() {
+	mkdir -p "$work"
+	tmp=$(native_file).tmp
+	{
+		printf '%s\n' '[binaries]'
+		printf "llvm-config = '%s'\n" "$llvm_config"
+	} >"$tmp"
+	mv "$tmp" "$(native_file)"
+}
+
+# The native file the build tree was set up with.
+native_stamp() { printf '%s\n' "$work/mesa/.native-llvm.stamp"; }
+
+# CloudBSD fork: remember the native file the build tree was set up with.
+record_native_file() {
+	mkdir -p "$(mesa_dir)"
+	cp "$(native_file)" "$(native_stamp)"
+}
+
+# Did the native file change since the build tree was set up?
+native_file_changed() {
+	[ -f "$(native_stamp)" ] || return 0
+	! cmp -s "$(native_stamp)" "$(native_file)"
+}
+
+# CloudBSD fork: the pkgconfig directory of the selected llvm-config comes
+# first in PKG_CONFIG_PATH, so that LLVMSPIRVLib is found.  The directory
+# comes from the llvm-config the build uses, so that the two always belong
+# to the same installation.
+llvm_pkgconfig_dir() {
+	prefix=$("$llvm_config" --prefix 2>/dev/null) || prefix=''
+	if [ -n "$prefix" ] && [ -d "$prefix/libdata/pkgconfig" ]; then
+		printf '%s\n' "$prefix/libdata/pkgconfig"
+		return 0
+	fi
+	libdir=$("$llvm_config" --libdir 2>/dev/null) || libdir=''
+	if [ -n "$libdir" ] && [ -d "$libdir/pkgconfig" ]; then
+		printf '%s\n' "$libdir/pkgconfig"
+		return 0
+	fi
+	return 1
+}
+
+# The whole PKG_CONFIG_PATH: the directory of the selected llvm-config
+# first, then the one of the caller.
+llvm_pkgconfig_path() {
+	dir=$(llvm_pkgconfig_dir) || dir=''
+	if [ -n "$dir" ]; then
+		printf '%s\n' "$dir${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+	else
+		printf '%s\n' "${PKG_CONFIG_PATH:-}"
+	fi
+}
 
 do_preflight() {
 	PREFLIGHT_COMMANDS=$TOOLS sh "$top/cloudbsd/preflight.sh" "$@"
@@ -131,10 +231,32 @@ build_libnvrm() {
 	[ -f "$(libnvrm_dir)/libnvrm.so" ] || die "libnvrm did not build"
 }
 
-build_mesa() {
+# CloudBSD fork: set the build tree up with the native file.  A tree that
+# was set up with another llvm-config is reconfigured with the native file,
+# so that the setting is never ignored.
+configure_mesa() {
+	write_native_file
+	# CloudBSD fork: LLVMSPIRVLib comes from the pkgconfig directory of
+	# the selected llvm-config, and meson resolves the dependencies when it
+	# sets the build tree up: the path is in the environment before meson
+	# runs.
+	PKG_CONFIG_PATH=$(llvm_pkgconfig_path)
+	export PKG_CONFIG_PATH
 	if [ ! -f "$(mesa_dir)/build.ninja" ]; then
-		mesa_opts_run meson setup "$(mesa_dir)" "$top"
+		mesa_opts_run meson setup "$(mesa_dir)" "$top" \
+		    --native-file "$(native_file)"
+		record_native_file
+		return 0
 	fi
+	if native_file_changed; then
+		mesa_opts_run meson setup --reconfigure "$(mesa_dir)" "$top" \
+		    --native-file "$(native_file)"
+		record_native_file
+	fi
+}
+
+build_mesa() {
+	configure_mesa
 	mesa_opts_run meson configure "$(mesa_dir)"
 	ninja -C "$(mesa_dir)" -j"$(ncpu)"
 	meson install -C "$(mesa_dir)" --quiet
@@ -381,6 +503,12 @@ do_test() {
 	check "make.sh check functions (tests/test-make-checks.sh)" \
 	    sh "$top/cloudbsd/tests/test-make-checks.sh" "$out/make-checks"
 
+	# CloudBSD fork: the parser tests of libnvptx, the PTX front end of
+	# native CUDA (Track #2426).
+	check "libnvptx parser tests" \
+	    env TMPDIR="$work/tmp" meson test -C "$(mesa_dir)" \
+	    --suite nvptx --print-errorlogs
+
 	# profile:chipset:PCI device id, from libnvrm's fake backend
 	# (lib/libnvrm/nvrm_fake.c): discrete is GB206-shaped, unified GB10.
 	for row in discrete:NV1B6:11524 unified:NV1BB:11794; do
@@ -473,6 +601,7 @@ case $cmd in
 preflight) do_preflight "$@" ;;
 install-deps) do_install_deps ;;
 configure) do_configure ;;
+configure-tree) refuse_root; configure_mesa ;;
 build) do_build ;;
 test) do_test ;;
 no-nouveau) no_nouveau "$@" ;;

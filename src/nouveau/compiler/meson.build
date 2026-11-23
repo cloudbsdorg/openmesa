@@ -165,3 +165,6 @@ idep_nak = declare_dependency(
   include_directories : include_directories('.'),
   link_with : _libnak,
 )
+
+# CloudBSD fork: libnvptx, the PTX front end of native CUDA (Track #2426).
+subdir('ptx')
