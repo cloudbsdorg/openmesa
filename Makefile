@@ -68,7 +68,10 @@ help:
 		"  LLVM_CONFIG=path  LLVM 19 llvm-config to build with" \
 		"                  (default /usr/local/bin/llvm-config19; the" \
 		"                  value must be an absolute path to an" \
-		"                  executable file)" \
+		"                  executable file; give it in the" \
+		"                  environment, LLVM_CONFIG=path make build," \
+		"                  because make expands a variable of its" \
+		"                  command line)" \
 		"  YES=1           do it without asking (install-deps)" \
 		"  JSON=1          preflight writes the --json contract" \
 		"" \

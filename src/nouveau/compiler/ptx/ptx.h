@@ -158,6 +158,8 @@ struct ptx_operand {
 /*
  * The largest number of statements one function may hold.
  *
+ * This limit is per function: the count starts again at every function, so
+ * a module of many functions may hold more statements than this in all.
  * A function of a compiler's output holds a few thousand statements and
  * the biggest kernels of nvcc hold tens of thousands; this limit is above
  * all of them, so that no real module is refused.  It bounds the tree of
@@ -168,11 +170,48 @@ struct ptx_operand {
 /*
  * The largest number of operands a whole module may hold.
  *
- * The operands of a real module number in the thousands; this limit is far
- * above them, so that no real module is refused.  It bounds the operands of
- * the module at about 100 MiB.
+ * This limit is per module: the count of the operands of the instructions
+ * runs over the whole module and never starts again.  The operands of a
+ * real module number in the thousands; this limit is far above them, so
+ * that no real module is refused.  It bounds the operands of the module at
+ * about 100 MiB.
  */
 #define PTX_MAX_OPERANDS_PER_MODULE 1048576u
+
+/*
+ * The largest number of nodes the tree of a module may hold.
+ *
+ * This limit is per module.  A node is everything the parser puts in the
+ * tree: a function, a module declaration, a parameter of a function, a
+ * statement (an instruction, a declaration or a label) and a nested scope.
+ * The count is made before the node is allocated, so that a module whose
+ * tree would grow without bound is refused before the memory is taken.
+ *
+ * The limit is 524288 nodes.  A module that reaches the limit of the
+ * operands holds 262146 nodes, so the budget is above it and the error a
+ * module gets names the limit that it really reached.  In the worst case
+ * every node is a statement of 816 bytes, so the tree of a module is
+ * bounded at about 430 MiB.  A real module holds far fewer nodes: a kernel
+ * of nvcc holds a few thousand and a whole program a few tens of
+ * thousands.
+ */
+#define PTX_MAX_MODULE_NODES 524288u
+
+/*
+ * The deepest nesting of scopes the parser accepts.
+ *
+ * A scope is a pair of braces inside the body of a function, and the
+ * parser reads a nested scope with a recursive call: the depth of the
+ * nesting is the depth of the C stack that the parse uses.  One frame of
+ * the parser holds a struct ptx_stmt of 816 bytes and a struct ptx_dyn,
+ * so a nesting of 64 costs about 60 KiB of stack, well under a tenth of
+ * the 1 MiB that a stack holds here.
+ *
+ * The limit is far above what a compiler writes: clang and nvcc open at
+ * most one scope inside the body of a function, so no real module comes
+ * near it.
+ */
+#define PTX_MAX_SCOPE_DEPTH 64u
 
 /*
  * One instruction: an optional guard, an opcode, the dotted modifiers that

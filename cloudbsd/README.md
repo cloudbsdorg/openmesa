@@ -26,7 +26,8 @@ make test
 `clean`. `configure-tree` configures only the Mesa build tree: it writes the
 native file and runs `meson setup` (with `--reconfigure` when the tree was
 set up with another `llvm-config`). `configure` prints the build options and
-builds nothing.
+**configures nothing**: it writes no file and runs no `meson setup`.  Use
+`configure-tree` (or `build`, which calls it) to set a tree up.
 
 `make build` builds libnvrm from `NVRM_SRC/lib/libnvrm`, then NVK with
 `-Dvulkan-drivers=nvk -Dnvk-kmd=nvrm`, then the probe. NVK and its ICD are
@@ -42,19 +43,46 @@ pkg-config directory of that installation first in `PKG_CONFIG_PATH` (the
 directory comes from `llvm-config --prefix`, so the two always belong to the
 same LLVM). The native file is written at every build, and a build tree that
 was set up with another `llvm-config` is reconfigured with it, so the setting
-is never ignored. Set `LLVM_CONFIG=path` (make) or `MK_LLVM_CONFIG=path`
-(make.sh) to use another one; the default is `/usr/local/bin/llvm-config19`.
+is never ignored. The default is `/usr/local/bin/llvm-config19`.
+
+## Choosing the llvm-config
+
+Give the path in the **environment**:
+
+```
+LLVM_CONFIG=/absolute/path/to/llvm-config19 make build NVRM_SRC=/path/to/nvidia-gb10-freebsd
+```
+
+The environment is the form to use: the value reaches `make.sh` exactly as it
+was written. A value given to make as a variable on the command line
+(`make build LLVM_CONFIG=...`) is **expanded by make** before it reaches
+`make.sh`, and GNU make and bmake expand it differently, so a path that holds
+a `$` or a `$$` does not arrive as it was written. `make.sh` names the
+`llvm-config` it chose, so the build says which one it used.
+
+`MK_LLVM_CONFIG` is the same setting for a direct call of `make.sh`
+(`MK_LLVM_CONFIG=/path/to/llvm-config19 sh cloudbsd/make.sh build`).
 `LLVM_CONFIG` wins over `MK_LLVM_CONFIG`, and every message names the
-variable that supplied the value.
+variable that supplied the value. A variable that is **set but empty** is a
+mistake and is refused as one ("LLVM_CONFIG is set but empty; unset it or
+give a path"); it is never taken for a variable that was never set.
 
 The value must be an absolute path to an executable file: it travels in the
 environment, never in the recipe, and a value that is not a path is refused
 before anything is built. The `llvm-config` must report the version `19.x`
 or `19.x.y`; one that fails, that says nothing, or that says something that
-is not a version is refused. The selected installation must have a
-pkg-config directory (`--prefix/libdata/pkgconfig` or `--libdir/pkgconfig`):
-when it has none, the build fails instead of taking the pkg-config path of
-the caller, which may belong to another LLVM.
+is not a version is refused.
+
+The selected installation must have a pkg-config directory
+(`--prefix/libdata/pkgconfig` or `--libdir/pkgconfig`), and that directory
+must hold the `.pc` files the build needs (`LLVMSPIRVLib.pc` and
+`libclc.pc`, from the `spirv-llvm-translator-llvm19` and `libclc-llvm19`
+packages). They are looked for in that directory alone, with
+`PKG_CONFIG_LIBDIR` naming it and `PKG_CONFIG_PATH` cleared, so that the
+package of another installation is never used: when the directory exists but
+holds none of them, the build fails instead of taking the package of the
+caller, which may belong to another LLVM. Every error names what was asked
+of the `llvm-config`, what came back and what to do next.
 
 Only the commands that build Mesa check the `llvm-config`: `configure`,
 `configure-tree`, `build` and `test`. `install-deps`, `preflight`, `clean`

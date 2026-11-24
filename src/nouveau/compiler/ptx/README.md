@@ -43,17 +43,36 @@ with an escape in it is written back with the same escape.
 
 A modifier that carries a scope keeps it whole: `ld.global.L1::no_allocate`,
 `cp.async.bulk.shared::cluster` and `mma.sync.aligned.kind::mxf4` are read
-as one word each, and the modifier is stored as `L1::no_allocate`.  A `::`
-that is not followed by an identifier is an error, not a modifier.
+as one word each, and the modifier is stored as `L1::no_allocate`.  The scope
+that follows a `::` is an identifier: it starts with a letter or an
+underscore, and it may hold digits after that, so `L1::123` is a number and
+not a modifier and is refused.  A `::` that follows no identifier of the word
+names no scope and is refused too.
 
 A module names its version and its target: a module without `.version` or
 without `.target` is refused with a named error.
 
-The tree of a module has a size.  A function may hold `PTX_MAX_STMTS_PER_FUNC`
-(65536) statements and a module may hold `PTX_MAX_OPERANDS_PER_MODULE`
-(1048576) operands; a module that holds more is refused with a named error.
-The limits are above what the PTX of a compiler holds, so that no real
-module is refused.
+The tree of a module has a size, and every limit says what it counts:
+
+- `PTX_MAX_STMTS_PER_FUNC` (65536) counts the statements of **one function**:
+  the count starts again at every function, so a module of many functions may
+  hold more statements than that in all;
+- `PTX_MAX_OPERANDS_PER_MODULE` (1048576) counts the instruction operands of
+  **the whole module**: that count never starts again;
+- `PTX_MAX_MODULE_NODES` (524288) counts the nodes of the tree of **the whole
+  module**: a function, a module declaration, a parameter of a function, a
+  statement (an instruction, a declaration or a label) and a nested scope.  The
+  count is made before the node is allocated, so that a module whose tree
+  would grow without bound is refused before the memory is taken;
+- `PTX_MAX_SCOPE_DEPTH` (64) is the depth of the nesting of the scopes of a
+  body.  The parser reads a nested scope with a recursive call, so that depth
+  is the depth of the C stack that the parse uses.
+
+A module that holds more than a limit is refused with a named error: "the
+function holds more than 65536 statements", "the module holds more than
+1048576 operands", "the module holds more than 524288 nodes" and "the scopes
+are nested more than 64 deep".  The limits are above what the PTX of a
+compiler holds, so that no real module is refused.
 
 ## What slice 1 does not cover
 

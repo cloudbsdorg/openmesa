@@ -88,6 +88,19 @@ lex_is_ident_char(char c)
 }
 
 /*
+ * Can the character start the scope that follows a "::" in a modifier?
+ *
+ * The scope is an identifier of the language of the modifiers, so it starts
+ * with a letter or an underscore.  A digit is not one: "L1::123" names a
+ * number and not a modifier.
+ */
+static bool
+lex_is_scope_start(char c)
+{
+   return isalpha((unsigned char)c) || c == '_';
+}
+
+/*
  * A register or a label may carry a dot in it: "%tid.x" is one token.  The
  * dot is only taken when a name follows it, so that ".b32" after an opcode
  * stays a word of its own.
@@ -218,15 +231,24 @@ lex_ident(struct ptx_lexer *lex, struct ptx_token *tok, struct ptx_diag *diag)
  * identifier character follows it; a "::" that ends the word is named where
  * it stands, so that "ld.global.L1:: b32" is refused and not read as a
  * modifier and an operand.
+ *
+ * The scope that follows the "::" is an identifier, so it starts with a
+ * letter or an underscore: "L1::123" is a number and not a modifier.  The
+ * "::" must also follow an identifier of the word, so that ".::foo" is
+ * refused: there is no scope to qualify.
  */
 static bool
 lex_dotword(struct ptx_lexer *lex, struct ptx_token *tok, struct ptx_diag *diag)
 {
    size_t start = lex->pos;
+   unsigned scope_line = lex->line;
+   unsigned scope_col = lex->col;
 
    lex_skip(lex, 1); /* the dot */
    /* Time: O(n) Space: O(1) */
    for (;;) {
+      size_t word = lex->pos;
+
       while (lex->pos < lex->len && lex_is_ident_char(lex->text[lex->pos]))
          lex_skip(lex, 1);
 
@@ -234,13 +256,21 @@ lex_dotword(struct ptx_lexer *lex, struct ptx_token *tok, struct ptx_diag *diag)
       if (lex->pos + 1 >= lex->len || lex->text[lex->pos] != ':' ||
           lex->text[lex->pos + 1] != ':')
          break;
-      if (lex->pos + 2 >= lex->len ||
-          !lex_is_ident_char(lex->text[lex->pos + 2])) {
-         return lex_error(diag, lex->line, lex->col,
+
+      /* The error names the place of the "::". */
+      scope_line = lex->line;
+      scope_col = lex->col;
+
+      if (lex->pos == word) {
+         return lex_error(diag, scope_line, scope_col,
+                          "a '::' in a modifier must follow an identifier");
+      }
+      lex_skip(lex, 2); /* the "::" */
+      if (lex->pos >= lex->len || !lex_is_scope_start(lex->text[lex->pos])) {
+         return lex_error(diag, scope_line, scope_col,
                           "a '::' in a modifier must be followed by an "
                           "identifier");
       }
-      lex_skip(lex, 2);
    }
 
    if (lex->pos == start + 1) {

@@ -33,10 +33,14 @@ jobs=${MK_JOBS:-}
 # overrides it.  The value comes from the environment, so it is never read
 # as shell source.  The name of the variable that supplied the value is
 # kept, so that every message names the control the user has to correct.
-if [ -n "${LLVM_CONFIG:-}" ]; then
+#
+# A variable that is set is used, even when it is set to nothing: an empty
+# LLVM_CONFIG is a mistake of the user and is named as one, and not taken
+# for a variable that was never set.
+if [ "${LLVM_CONFIG+x}" = x ]; then
 	llvm_config=$LLVM_CONFIG
 	llvm_config_var=LLVM_CONFIG
-elif [ -n "${MK_LLVM_CONFIG:-}" ]; then
+elif [ "${MK_LLVM_CONFIG+x}" = x ]; then
 	llvm_config=$MK_LLVM_CONFIG
 	llvm_config_var=MK_LLVM_CONFIG
 else
@@ -96,31 +100,47 @@ is_llvm19_version() {
 	return 0
 }
 
+# CloudBSD fork: the llvm-config that was chosen is named once, so that a
+# build says which one it uses and where the value came from.
+announced=0
+announce_llvm_config() {
+	[ "$announced" = 0 ] || return 0
+	announced=1
+	printf '%s\n' "llvm-config: $llvm_config (from $llvm_config_var)"
+}
+
 # CloudBSD fork: the llvm-config must be the path of an executable file.
 # A value that is not one is refused before anything is built.  Only the
 # commands that build Mesa need it: the command that installs LLVM 19,
 # the preflight, the usage and the clean must work without it.
+#
+# Every message says what to do next: the name of the variable that holds
+# the value and the value that is expected there.
 check_llvm_config() {
+	if [ -z "$llvm_config" ]; then
+		die "$llvm_config_var is set but empty; unset it or give a path"
+	fi
 	case $llvm_config in
 	/*) ;;
 	*) die "$llvm_config_var is not an absolute path: '$(show_value "$llvm_config")'; set $llvm_config_var=/absolute/path/to/llvm-config19" ;;
 	esac
 	[ -f "$llvm_config" ] ||
-		die "$llvm_config_var is not a file: '$(show_value "$llvm_config")'"
+		die "$llvm_config_var is not a file: '$(show_value "$llvm_config")'; choose an executable llvm-config and set $llvm_config_var=/absolute/path/to/executable/llvm-config19"
 	[ -x "$llvm_config" ] ||
-		die "$llvm_config_var is not executable: '$(show_value "$llvm_config")'"
+		die "$llvm_config_var is not executable: '$(show_value "$llvm_config")'; choose an executable llvm-config and set $llvm_config_var=/absolute/path/to/executable/llvm-config19"
 	if printf '%s' "$llvm_config" | grep -q "['\"]"; then
-		die "$llvm_config_var holds a quote: '$(show_value "$llvm_config")'"
+		die "$llvm_config_var holds a quote: '$(show_value "$llvm_config")'; set $llvm_config_var to a single-line absolute path without quote characters"
 	fi
 	[ "$(printf '%s' "$llvm_config" | wc -l)" -eq 0 ] ||
-		die "$llvm_config_var holds a newline: '$(show_value "$llvm_config")'"
+		die "$llvm_config_var holds a newline: '$(show_value "$llvm_config")'; set $llvm_config_var to a single-line absolute path without quote characters"
 	# CloudBSD fork: the build needs LLVM 19, because LLVMSPIRVLib comes
 	# from that installation.  A llvm-config of another version is
 	# refused with a message that says what is needed.
 	version=$("$llvm_config" --version 2>/dev/null) || version=''
 	if ! is_llvm19_version "$version"; then
-		die "$llvm_config_var is not LLVM 19: '$(show_value "$version")'; this build needs LLVM 19"
+		die "$llvm_config_var is not LLVM 19: '$(show_value "$version")'; this build needs LLVM 19, so set $llvm_config_var to the llvm-config of an LLVM 19 installation"
 	fi
+	announce_llvm_config
 }
 
 # Builds and tests run as a normal user: the Python and meson scripts of the
@@ -190,35 +210,84 @@ native_file_changed() {
 	! cmp -s "$(native_stamp)" "$(native_file)"
 }
 
-# CloudBSD fork: the pkgconfig directory of the selected llvm-config comes
-# first in PKG_CONFIG_PATH, so that LLVMSPIRVLib is found.  The directory
-# comes from the llvm-config the build uses, so that the two always belong
-# to the same installation.
-llvm_pkgconfig_dir() {
-	prefix=$("$llvm_config" --prefix 2>/dev/null) || prefix=''
-	if [ -n "$prefix" ] && [ -d "$prefix/libdata/pkgconfig" ]; then
-		printf '%s\n' "$prefix/libdata/pkgconfig"
-		return 0
+# CloudBSD fork: the pkg-config directory of the selected llvm-config comes
+# from that llvm-config, so that the package of the build and the llvm-config
+# of the build always belong to the same installation.
+#
+# The llvm-config is asked once, for its prefix and for its libdir, and the
+# values it gives are kept.  The candidates that are built from them are
+# the ones that are checked and the ones that the message of a failure
+# names, so that the check and the message cannot disagree.
+#
+# The candidates are:
+#   - <prefix>/libdata/pkgconfig, the directory of the packages of the
+#     LLVM prefix (LLVMSPIRVLib.pc and libclc.pc of the FreeBSD ports);
+#   - <libdir>/pkgconfig, the directory that an installation that keeps
+#     them next to the libraries uses.
+llvm_pkgconfig_query() {
+	pkg_prefix=$("$llvm_config" --prefix 2>/dev/null) || pkg_prefix=''
+	pkg_libdir=$("$llvm_config" --libdir 2>/dev/null) || pkg_libdir=''
+	pkg_candidates=
+	pkg_tried=
+	if [ -n "$pkg_prefix" ]; then
+		pkg_candidates="$pkg_candidates$pkg_prefix/libdata/pkgconfig
+"
+		pkg_tried="$pkg_tried --prefix => $pkg_prefix/libdata/pkgconfig
+"
+	else
+		pkg_tried="$pkg_tried --prefix => nothing came back
+"
 	fi
-	libdir=$("$llvm_config" --libdir 2>/dev/null) || libdir=''
-	if [ -n "$libdir" ] && [ -d "$libdir/pkgconfig" ]; then
-		printf '%s\n' "$libdir/pkgconfig"
-		return 0
+	if [ -n "$pkg_libdir" ]; then
+		pkg_candidates="$pkg_candidates$pkg_libdir/pkgconfig
+"
+		pkg_tried="$pkg_tried --libdir => $pkg_libdir/pkgconfig
+"
+	else
+		pkg_tried="$pkg_tried --libdir => nothing came back
+"
 	fi
-	return 1
 }
 
-# The directories that were looked at, for the message of the failure.
-llvm_pkgconfig_tried() {
-	prefix=$("$llvm_config" --prefix 2>/dev/null) || prefix=''
-	libdir=$("$llvm_config" --libdir 2>/dev/null) || libdir=''
-	if [ -n "$prefix" ]; then
-		printf '%s\n' "$prefix/libdata/pkgconfig"
-	fi
-	if [ -n "$libdir" ]; then
-		printf '%s\n' "$libdir/pkgconfig"
-	fi
-	return 0
+# The first candidate that is a directory.  Nothing is printed when no
+# candidate is a directory.
+llvm_pkgconfig_dir() {
+	printf '%s' "$pkg_candidates" | while IFS= read -r dir; do
+		[ -n "$dir" ] || continue
+		[ -d "$dir" ] || continue
+		printf '%s\n' "$dir"
+		break
+	done
+}
+
+# The .pc files the build needs from the selected installation.
+#
+# They come from the packages of the fork that install into the prefix of
+# the LLVM: spirv-llvm-translator-llvm19 and libclc-llvm19.
+REQUIRED_PKG_CONFIG="LLVMSPIRVLib libclc"
+
+# CloudBSD fork: the packages the build needs must come from the directory
+# of the selected installation.
+#
+# PKG_CONFIG_PATH is cleared and PKG_CONFIG_LIBDIR names the selected
+# directory alone, so that the package of another installation is never
+# found.  The file that is found must also be in that directory.
+check_required_pkgconfig() {
+	dir=$1
+	command -v pkg-config >/dev/null 2>&1 ||
+		die "pkg-config is not installed; install it (make install-deps) before the build"
+	for pkg in $REQUIRED_PKG_CONFIG; do
+		if ! PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$dir" \
+		    pkg-config --exists "$pkg" 2>/dev/null; then
+			die "the pkg-config file $pkg.pc is not in the directory of the $llvm_config_var '$llvm_config' ($dir); install the packages of the fork that provide it (spirv-llvm-translator-llvm19, libclc-llvm19) or select another llvm-config"
+		fi
+		found=$(PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$dir" \
+		    pkg-config --variable=pcfiledir "$pkg" 2>/dev/null) || found=''
+		case $found in
+		"$dir"|"$dir"/*) ;;
+		*) die "the pkg-config file $pkg.pc was found in '$found' and not in the directory of the $llvm_config_var '$llvm_config' ($dir); select another llvm-config" ;;
+		esac
+	done
 }
 
 # The whole PKG_CONFIG_PATH: the directory of the selected llvm-config
@@ -228,11 +297,12 @@ llvm_pkgconfig_tried() {
 # fails: the directory of the caller may belong to another LLVM, and the
 # build would then use two LLVMs at once.
 llvm_pkgconfig_path() {
-	dir=$(llvm_pkgconfig_dir) || dir=''
+	llvm_pkgconfig_query
+	dir=$(llvm_pkgconfig_dir)
 	if [ -z "$dir" ]; then
-		tried=$(llvm_pkgconfig_tried | tr '\n' ' ')
-		die "the pkg-config directory of the $llvm_config_var '$llvm_config' was not found; tried: $tried"
+		die "the pkg-config directory of the $llvm_config_var '$llvm_config' was not found; asked $llvm_config for --prefix and --libdir and got: $pkg_tried"
 	fi
+	check_required_pkgconfig "$dir"
 	printf '%s\n' "$dir${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 }
 

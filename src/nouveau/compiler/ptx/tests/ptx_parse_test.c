@@ -1878,7 +1878,275 @@ test_scope_modifiers(void)
                  "a '::' in a modifier must be followed by an identifier",
                  5, 14);
 
+   /*
+    * The scope of a cache modifier is an identifier: it starts with a
+    * letter or an underscore, and it may hold digits.  "L1::123" names a
+    * number and not a modifier.
+    */
+   check_refused("error: a cache modifier whose scope is a number",
+                 ".version 9.0\n.target sm_120\n.visible .entry k()\n"
+                 "{\n\tld.global.L1::123.b32 %r1, [%rd1];\n}\n",
+                 "a '::' in a modifier must be followed by an identifier",
+                 5, 14);
+
+   /*
+    * A "::" that follows no identifier of the word names no scope: there
+    * is nothing to qualify.
+    */
+   check_refused("error: a modifier whose scope names nothing",
+                 ".version 9.0\n.target sm_120\n.visible .entry k()\n"
+                 "{\n\tld.::foo.b32 %r1, [%rd1];\n}\n",
+                 "a '::' in a modifier must follow an identifier", 5, 5);
+
    ralloc_free(ctx);
+}
+
+/*
+ * The header of a generated module: the version, the target and the
+ * address size.  Every generated module starts with it, so that the tests
+ * do not repeat it.
+ */
+static size_t
+module_header(char *text, size_t size)
+{
+   return (size_t)snprintf(text, size,
+                           ".version 9.0\n.target sm_120\n.address_size 64\n");
+}
+
+/* What a generated module holds. */
+enum module_kind {
+   MODULE_SCOPES,   /* one function whose body holds nested scopes */
+   MODULE_FUNCTIONS, /* many functions that hold no operand */
+   MODULE_DECLS,    /* many module declarations */
+   MODULE_PARAMS,   /* one function with many parameters */
+};
+
+/*
+ * A generated module: the header, then the body that the kind names.
+ *
+ * The count is the number of scopes, of functions, of declarations or of
+ * parameters that the module holds.
+ */
+static char *
+module_generated(enum module_kind kind, unsigned count, size_t *used_out)
+{
+   size_t size = 1024 + (size_t)count * 40;
+   char *text = malloc(size);
+   size_t used = 0;
+   unsigned i;
+
+   if (!text)
+      return NULL;
+
+   used = module_header(text, size);
+
+   switch (kind) {
+   case MODULE_SCOPES:
+      used += (size_t)snprintf(text + used, size - used,
+                               ".visible .entry k()\n{\n");
+      for (i = 0; i < count; i++)
+         used += (size_t)snprintf(text + used, size - used, "{\n");
+      used += (size_t)snprintf(text + used, size - used, "\tret;\n");
+      for (i = 0; i < count; i++)
+         used += (size_t)snprintf(text + used, size - used, "}\n");
+      used += (size_t)snprintf(text + used, size - used, "}\n");
+      break;
+
+   case MODULE_FUNCTIONS:
+      for (i = 0; i < count; i++)
+         used += (size_t)snprintf(text + used, size - used,
+                                  ".visible .entry f%u()\n{\n}\n", i);
+      break;
+
+   case MODULE_DECLS:
+      for (i = 0; i < count; i++)
+         used += (size_t)snprintf(text + used, size - used, ".global .b8 g%u;\n",
+                                  i);
+      break;
+
+   case MODULE_PARAMS:
+      used += (size_t)snprintf(text + used, size - used, ".visible .entry k(\n");
+      for (i = 0; i < count; i++)
+         used += (size_t)snprintf(text + used, size - used, ".param .u64 p%u%s",
+                                  i, i + 1 == count ? "\n" : ",\n");
+      used += (size_t)snprintf(text + used, size - used, ")\n{\n\tret;\n}\n");
+      break;
+   }
+
+   *used_out = used;
+   return text;
+}
+
+/*
+ * The scopes of a body are nested a little.
+ *
+ * The parser reads a nested scope with a recursive call, so the depth of
+ * the nesting is the depth of the C stack that the parse uses.  A module
+ * that opens more scopes than the limit is refused with a named error
+ * before the stack is used, and a module that opens exactly as many as the
+ * limit is read.
+ */
+static void
+test_scope_depth(void)
+{
+   void *ctx = ralloc_context(NULL);
+   struct ptx_diag diag;
+   struct ptx_module *m;
+   char expect[128];
+   size_t used = 0;
+   char *text;
+
+   /* A body with the scopes at the limit. */
+   text = module_generated(MODULE_SCOPES, PTX_MAX_SCOPE_DEPTH, &used);
+   if (!text) {
+      check(false, "the module with the scopes at the limit is read",
+            "cannot build the module");
+      ralloc_free(ctx);
+      return;
+   }
+
+   m = parse_text_timed(ctx, text, used, &diag);
+   check(m != NULL, "the module with the scopes at the limit is read",
+         "%s at %u:%u", diag.msg, diag.line, diag.col);
+   free(text);
+
+   /* One scope more: the parse must be refused, not crash. */
+   text = module_generated(MODULE_SCOPES, PTX_MAX_SCOPE_DEPTH + 1, &used);
+   if (!text) {
+      check(false, "the module with one scope too many is refused",
+            "cannot build the module");
+      ralloc_free(ctx);
+      return;
+   }
+
+   snprintf(expect, sizeof(expect), "the scopes are nested more than %u deep",
+            PTX_MAX_SCOPE_DEPTH);
+   m = parse_text_timed(ctx, text, used, &diag);
+   if (m) {
+      check(false, "the module with one scope too many is refused",
+            "the parse succeeded");
+   } else {
+      /*
+       * The scope that is one too many stands on the line after the last
+       * scope that the limit allows: the body opens on the fifth line and
+       * every scope opens on a line of its own.
+       */
+      check(strcmp(diag.msg, expect) == 0 &&
+            diag.line == 5 + PTX_MAX_SCOPE_DEPTH + 1 && diag.col == 1,
+            "the module with one scope too many is refused",
+            "expected '%s' at %u:1, got '%s' at %u:%u", expect,
+            5 + PTX_MAX_SCOPE_DEPTH + 1, diag.msg, diag.line, diag.col);
+   }
+
+   free(text);
+   ralloc_free(ctx);
+}
+
+/*
+ * The tree of a module has a size.
+ *
+ * The limits above count the statements of one function and the operands
+ * of the module.  The nodes of the tree of the whole module are counted
+ * as well: a module with more functions, more module declarations or more
+ * parameters than the budget is refused with a named error, before the
+ * node that would pass the budget is allocated.
+ */
+
+/*
+ * Check that a generated module is refused with the named error.
+ *
+ * The parse runs under the alarm of parse_text_timed, so that a parser
+ * that loops on the module fails the case instead of waiting forever.
+ */
+static void
+check_refused_generated(const char *name, const char *text, size_t len,
+                        const char *msg)
+{
+   void *ctx = ralloc_context(NULL);
+   struct ptx_diag diag;
+   struct ptx_module *m = parse_text_timed(ctx, text, len, &diag);
+
+   if (m) {
+      check(false, name, "expected the error '%s', but the parse succeeded",
+            msg);
+   } else {
+      check(strcmp(diag.msg, msg) == 0, name, "expected '%s', got '%s' at %u:%u",
+            msg, diag.msg, diag.line, diag.col);
+   }
+
+   ralloc_free(ctx);
+}
+
+/* Check that a generated module is read. */
+static void
+check_parsed_generated(const char *name, const char *text, size_t len)
+{
+   void *ctx = ralloc_context(NULL);
+   struct ptx_diag diag;
+   struct ptx_module *m = parse_text_timed(ctx, text, len, &diag);
+
+   check(m != NULL, name, "%s at %u:%u", diag.msg, diag.line, diag.col);
+
+   ralloc_free(ctx);
+}
+
+static void
+test_module_nodes(void)
+{
+   char expect[128];
+   size_t len = 0;
+   char *text;
+
+   snprintf(expect, sizeof(expect), "the module holds more than %u nodes",
+            PTX_MAX_MODULE_NODES);
+
+   /* A module with as many functions as the budget holds is read. */
+   text = module_generated(MODULE_FUNCTIONS, PTX_MAX_MODULE_NODES, &len);
+   if (!text) {
+      check(false, "the module with the functions at the budget is read",
+            "cannot build the module");
+   } else {
+      check_parsed_generated("the module with the functions at the budget is "
+                             "read",
+                             text, len);
+      free(text);
+   }
+
+   /* One function more: the module is refused. */
+   text = module_generated(MODULE_FUNCTIONS, PTX_MAX_MODULE_NODES + 1, &len);
+   if (!text) {
+      check(false, "the module with one function too many is refused",
+            "cannot build the module");
+   } else {
+      check_refused_generated("the module with one function too many is "
+                              "refused",
+                              text, len, expect);
+      free(text);
+   }
+
+   /* One module declaration more: the module is refused. */
+   text = module_generated(MODULE_DECLS, PTX_MAX_MODULE_NODES + 1, &len);
+   if (!text) {
+      check(false, "the module with one declaration too many is refused",
+            "cannot build the module");
+   } else {
+      check_refused_generated("the module with one declaration too many is "
+                              "refused",
+                              text, len, expect);
+      free(text);
+   }
+
+   /* One parameter more in one function: the module is refused. */
+   text = module_generated(MODULE_PARAMS, PTX_MAX_MODULE_NODES + 1, &len);
+   if (!text) {
+      check(false, "the module with one parameter too many is refused",
+            "cannot build the module");
+   } else {
+      check_refused_generated("the module with one parameter too many is "
+                              "refused",
+                              text, len, expect);
+      free(text);
+   }
 }
 
 /*
@@ -1909,9 +2177,8 @@ test_tree_limits(void)
       return;
    }
 
-   used = (size_t)snprintf(text, size,
-                           ".version 9.0\n.target sm_120\n.address_size 64\n"
-                           ".visible .entry k()\n{\n");
+   used = module_header(text, size);
+   used += (size_t)snprintf(text + used, size - used, ".visible .entry k()\n{\n");
    for (i = 0; i <= PTX_MAX_STMTS_PER_FUNC; i++)
       used += (size_t)snprintf(text + used, size - used, "\tret;\n");
    used += (size_t)snprintf(text + used, size - used, "}\n");
@@ -1941,8 +2208,7 @@ test_tree_limits(void)
       return;
    }
 
-   used = (size_t)snprintf(text, size,
-                           ".version 9.0\n.target sm_120\n.address_size 64\n");
+   used = module_header(text, size);
    /*
     * Every instruction holds eight operands, so the module reaches the
     * limit in an eighth of the statements the limit of the statements
@@ -2091,7 +2357,9 @@ main(void)
    test_unsized_array();
    test_lookahead_errors();
    test_scope_modifiers();
+   test_scope_depth();
    test_tree_limits();
+   test_module_nodes();
    test_list_copies();
    test_required_directives();
 

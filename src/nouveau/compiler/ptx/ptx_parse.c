@@ -28,9 +28,6 @@
 /* The biggest module the parser accepts. */
 #define PTX_MAX_INPUT (64u * 1024u * 1024u)
 
-/* The deepest nesting of scopes the parser accepts. */
-#define PTX_MAX_SCOPE_DEPTH 64
-
 /* The types, in the order of enum ptx_type.  The last entry ends the table. */
 static const struct {
    const char *name;
@@ -108,12 +105,13 @@ struct ptx_parser {
    struct ptx_dyn target_flags;
    struct ptx_dyn funcs;
    struct ptx_dyn decls;
-   /* The statements of the function being read, and the operands of the
-    * module: both have a limit, so that a module cannot grow its tree
-    * without bound.
+   /* The statements of the function that is being read, the operands of
+    * the module and the nodes of the tree of the module: they have a
+    * limit, so that a module cannot grow its tree without bound.
     */
    unsigned func_stmts;
    uint64_t operands;
+   uint64_t nodes;
 };
 
 static void
@@ -224,6 +222,30 @@ ptx_count_operand(struct ptx_parser *p)
    if (p->operands > PTX_MAX_OPERANDS_PER_MODULE) {
       return ptx_error(p, &p->tok, "the module holds more than %u operands",
                        PTX_MAX_OPERANDS_PER_MODULE);
+   }
+
+   return true;
+}
+
+/*
+ * Count one node of the tree of the module.
+ *
+ * Every node the parser puts in the tree is counted before it is
+ * allocated: a function, a module declaration, a parameter, a statement
+ * (an instruction, a declaration or a label) and a nested scope.  The
+ * limits above count the statements of one function and the operands of
+ * the module; this one counts the tree of the whole module, so that many
+ * functions, many declarations or many parameters cannot grow it without
+ * bound either.
+ */
+static bool
+ptx_count_node(struct ptx_parser *p)
+{
+   p->nodes++;
+
+   if (p->nodes > PTX_MAX_MODULE_NODES) {
+      return ptx_error(p, &p->tok, "the module holds more than %u nodes",
+                       PTX_MAX_MODULE_NODES);
    }
 
    return true;
@@ -786,6 +808,8 @@ ptx_parse_param_list(struct ptx_parser *p, struct ptx_decl **out,
 
       if (!ptx_parse_decl(p, &d, true))
          return false;
+      if (!ptx_count_node(p))
+         return false;
       if (!dyn_add(&params, &d))
          return ptx_oom(p);
 
@@ -1274,6 +1298,8 @@ ptx_parse_stmt(struct ptx_parser *p, struct ptx_func *f, struct ptx_dyn *stmts)
 
    if (!ptx_count_stmt(p))
       return false;
+   if (!ptx_count_node(p))
+      return false;
    if (!dyn_add(stmts, &stmt))
       return ptx_oom(p);
 
@@ -1308,7 +1334,9 @@ ptx_parse_scope(struct ptx_parser *p, struct ptx_func *f, struct ptx_dyn *stmts,
          struct ptx_dyn inner;
 
          if (depth >= PTX_MAX_SCOPE_DEPTH)
-            return ptx_error(p, t, "the scopes are nested too deeply");
+            return ptx_error(p, t,
+                             "the scopes are nested more than %u deep",
+                             PTX_MAX_SCOPE_DEPTH);
 
          memset(&stmt, 0, sizeof(stmt));
          stmt.kind = PTX_STMT_SCOPE;
@@ -1326,6 +1354,8 @@ ptx_parse_scope(struct ptx_parser *p, struct ptx_func *f, struct ptx_dyn *stmts,
          stmt.u.scope.nstmts = inner.n;
          p->copies += inner.copies;
          if (!ptx_count_stmt(p))
+            return false;
+         if (!ptx_count_node(p))
             return false;
          if (!dyn_add(stmts, &stmt))
             return ptx_oom(p);
@@ -1429,6 +1459,8 @@ ptx_parse_func(struct ptx_parser *p)
       return ptx_error(p, &p->tok, "expected '{' or ';'");
    }
 
+   if (!ptx_count_node(p))
+      return false;
    if (!dyn_add(&p->funcs, &f))
       return ptx_oom(p);
 
@@ -1455,6 +1487,8 @@ ptx_parse_module_decl(struct ptx_parser *p)
 
    d.linkage = linkage;
 
+   if (!ptx_count_node(p))
+      return false;
    if (!dyn_add(&p->decls, &d))
       return ptx_oom(p);
 

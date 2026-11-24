@@ -182,9 +182,32 @@ exit 0
 EOF
 chmod +x "$fake_bin/meson"
 
+# The .pc files that the build needs from the selected installation.  The
+# build looks for them in the directory of the chosen llvm-config alone, so
+# that the package of another installation is never used.
+make_pkgconfig() {
+	dir=$1
+	mkdir -p "$dir"
+	for pkg in LLVMSPIRVLib libclc; do
+		cat >"$dir/$pkg.pc" <<EOF
+prefix=$dir
+libdir=$dir
+includedir=$dir
+
+Name: $pkg
+Description: the $pkg of the test
+Version: 19.1.7
+Libs: -L$dir -l$pkg
+Cflags: -I$dir
+EOF
+	done
+}
+
 prefix_a=$fixtures/llvm-a
 prefix_b=$fixtures/llvm-b
 mkdir -p "$prefix_a/libdata/pkgconfig" "$prefix_b/libdata/pkgconfig"
+make_pkgconfig "$prefix_a/libdata/pkgconfig"
+make_pkgconfig "$prefix_b/libdata/pkgconfig"
 make_llvm_config "$fixtures/llvm-config-a" "$prefix_a"
 make_llvm_config "$fixtures/llvm-config-b" "$prefix_b"
 
@@ -333,6 +356,128 @@ assert_has 'the refusal names the llvm-config' "$out" \
 assert_has 'the refusal names the directory that was tried' "$out" \
     "$fixtures/llvm-nopkg/libdata/pkgconfig"
 
+# CloudBSD fork: a directory that exists but holds none of the packages
+# that the build needs is not enough.  The package of the caller must not
+# be used: the build would then mix two LLVM installations.
+mkdir -p "$fixtures/llvm-emptypkg/libdata/pkgconfig"
+cat >"$fixtures/llvm-config-emptypkg" <<EOF
+#!/bin/sh
+case "\${1:-}" in
+--prefix) printf '%s\n' '$fixtures/llvm-emptypkg' ;;
+--libdir) printf '%s\n' '$fixtures/llvm-emptypkg/lib' ;;
+--version) printf '%s\n' '19.1.7' ;;
+*) exit 1 ;;
+esac
+EOF
+chmod +x "$fixtures/llvm-config-emptypkg"
+
+mkdir -p "$fixtures/caller-pkgconfig"
+cp "$prefix_a/libdata/pkgconfig/LLVMSPIRVLib.pc" \
+    "$fixtures/caller-pkgconfig/LLVMSPIRVLib.pc"
+
+: >"$log"
+out=$fixtures/empty-pkgconfig.out
+env PATH="$fake_bin:$PATH" MK_WORK="$work" MK_MESON_LOG="$log" \
+    LLVM_CONFIG="$fixtures/llvm-config-emptypkg" \
+    PKG_CONFIG_PATH="$fixtures/caller-pkgconfig" \
+    sh "$top/cloudbsd/make.sh" configure-tree >"$out" 2>&1 || true
+assert_count 'no meson runs when the selected directory holds no package' \
+    "$log" 0
+assert_has 'the refusal names the package that is missing' "$out" \
+    'LLVMSPIRVLib.pc'
+assert_has 'the refusal names the directory of the selected llvm-config' \
+    "$out" "$fixtures/llvm-emptypkg/libdata/pkgconfig"
+
+# CloudBSD fork: the llvm-config is asked once for its installation.  A
+# llvm-config that answers with another prefix the second time it is asked
+# must not make the check and the message of the failure disagree: the
+# message names the candidate that was checked.
+cat >"$fixtures/llvm-config-switching" <<EOF
+#!/bin/sh
+case "\${1:-}" in
+--prefix)
+	counter="$work/switching.prefix.count"
+	n=\$(cat "\$counter" 2>/dev/null || echo 0)
+	n=\$((n + 1))
+	printf '%s\n' "\$n" >"\$counter"
+	if [ "\$n" -le 1 ]; then
+		printf '%s\n' '$fixtures/llvm-switch-a'
+	else
+		printf '%s\n' '$fixtures/llvm-switch-b'
+	fi
+	;;
+--libdir) printf '%s\n' '$fixtures/llvm-switch-b/lib' ;;
+--version) printf '%s\n' '19.1.7' ;;
+*) exit 1 ;;
+esac
+EOF
+chmod +x "$fixtures/llvm-config-switching"
+
+: >"$log"
+out=$fixtures/switching.out
+env PATH="$fake_bin:$PATH" MK_WORK="$work" MK_MESON_LOG="$log" \
+    LLVM_CONFIG="$fixtures/llvm-config-switching" \
+    sh "$top/cloudbsd/make.sh" configure-tree >"$out" 2>&1 || true
+assert_count 'no meson runs without a pkg-config directory' "$log" 0
+assert_has 'the refusal names the candidate that was checked' "$out" \
+    "$fixtures/llvm-switch-a/libdata/pkgconfig"
+assert_lacks 'the refusal does not name another candidate' "$out" \
+    "$fixtures/llvm-switch-b/libdata/pkgconfig"
+
+# CloudBSD fork: a llvm-config that cannot say where its installation is
+# is named as such, and the list of what was tried is never empty.
+cat >"$fixtures/llvm-config-noprefix" <<'EOF'
+#!/bin/sh
+case "${1:-}" in
+--version) printf '%s\n' '19.1.7' ;;
+*) exit 1 ;;
+esac
+EOF
+chmod +x "$fixtures/llvm-config-noprefix"
+
+out=$fixtures/noprefix.out
+env PATH="$fake_bin:$PATH" MK_WORK="$work" MK_MESON_LOG="$log" \
+    LLVM_CONFIG="$fixtures/llvm-config-noprefix" \
+    sh "$top/cloudbsd/make.sh" configure-tree >"$out" 2>&1 || true
+assert_has 'the refusal says what was asked and what came back' "$out" \
+    '--prefix => nothing came back'
+assert_has 'the refusal says what was asked and what came back' "$out" \
+    '--libdir => nothing came back'
+
+# CloudBSD fork: a variable that is set but empty is a mistake of the
+# user, and it is named as one.  It must not fall back to the other
+# variable or to the default.
+out=$fixtures/empty-llvm-config.out
+env PATH="$fake_bin:$PATH" MK_WORK="$work" MK_MESON_LOG="$log" \
+    LLVM_CONFIG='' MK_LLVM_CONFIG="$fixtures/llvm-config-a" \
+    sh "$top/cloudbsd/make.sh" configure-tree >"$out" 2>&1 || true
+assert_has 'an empty LLVM_CONFIG is refused' "$out" \
+    'LLVM_CONFIG is set but empty'
+assert_lacks 'an empty LLVM_CONFIG does not fall back to MK_LLVM_CONFIG' \
+    "$out" 'MK_LLVM_CONFIG'
+run_case 'make.sh refuses an empty LLVM_CONFIG' 1 \
+    env PATH="$fake_bin:$PATH" MK_WORK="$work" MK_MESON_LOG="$log" \
+    LLVM_CONFIG='' MK_LLVM_CONFIG="$fixtures/llvm-config-a" \
+    sh "$top/cloudbsd/make.sh" configure-tree
+
+# CloudBSD fork: every error of the llvm-config says what to do next.
+: >"$fixtures/llvm-config-not-executable"
+out=$fixtures/not-executable.out
+env PATH="$fake_bin:$PATH" MK_WORK="$work" MK_MESON_LOG="$log" \
+    LLVM_CONFIG="$fixtures/llvm-config-not-executable" \
+    sh "$top/cloudbsd/make.sh" configure-tree >"$out" 2>&1 || true
+assert_has 'the refusal says what to do about a file that is not executable' \
+    "$out" 'choose an executable llvm-config'
+
+cp "$fixtures/llvm-config-a" "$fixtures/llvm-config\"quoted"
+chmod +x "$fixtures/llvm-config\"quoted"
+out=$fixtures/quoted.out
+env PATH="$fake_bin:$PATH" MK_WORK="$work" MK_MESON_LOG="$log" \
+    LLVM_CONFIG="$fixtures/llvm-config\"quoted" \
+    sh "$top/cloudbsd/make.sh" configure-tree >"$out" 2>&1 || true
+assert_has 'the refusal says what to do about a path that holds a quote' \
+    "$out" 'without quote characters'
+
 # CloudBSD fork: only a version of LLVM 19 is accepted.  An llvm-config
 # that fails, that says nothing, or that says something that is not a
 # version, is refused.
@@ -408,6 +553,16 @@ for mk in make gmake; do
 	    LLVM_CONFIG='$$(shell touch '"$sentinel"')') >"$out" 2>&1 || true
 	assert_absent "the value of LLVM_CONFIG is not run as make syntax by $mk" \
 	    "$sentinel"
+
+	# The value as a variable of make reaches make.sh: make.sh names the
+	# llvm-config it chose, and the name is the path that was given.
+	cmdline_llvm=$fixtures/llvm-config-cmdline-$mk
+	make_llvm_config "$cmdline_llvm" "$fixtures/llvm-cmdline-$mk"
+	out=$fixtures/make-command-line-$mk.out
+	(cd "$top" && "$mk" build NVRM_SRC="$fixtures/no-libnvrm" WORK="$work" \
+	    LLVM_CONFIG="$cmdline_llvm") >"$out" 2>&1 || true
+	assert_has "the value of LLVM_CONFIG on the command line reaches make.sh by $mk" \
+	    "$out" "$cmdline_llvm"
 done
 
 # CloudBSD fork: the diagnostic names the variable the user set, and the
