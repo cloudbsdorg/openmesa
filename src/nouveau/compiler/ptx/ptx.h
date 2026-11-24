@@ -156,6 +156,25 @@ struct ptx_operand {
 #define PTX_MAX_MODIFIERS 8
 
 /*
+ * The largest number of statements one function may hold.
+ *
+ * A function of a compiler's output holds a few thousand statements and
+ * the biggest kernels of nvcc hold tens of thousands; this limit is above
+ * all of them, so that no real module is refused.  It bounds the tree of
+ * one function at about 60 MiB.
+ */
+#define PTX_MAX_STMTS_PER_FUNC 65536u
+
+/*
+ * The largest number of operands a whole module may hold.
+ *
+ * The operands of a real module number in the thousands; this limit is far
+ * above them, so that no real module is refused.  It bounds the operands of
+ * the module at about 100 MiB.
+ */
+#define PTX_MAX_OPERANDS_PER_MODULE 1048576u
+
+/*
  * One instruction: an optional guard, an opcode, the dotted modifiers that
  * follow it and the operands.
  *

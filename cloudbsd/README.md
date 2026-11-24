@@ -16,9 +16,17 @@ and never submitted upstream.
 
 ```
 make install-deps            # pkg install of the build dependencies (asks first)
+make configure-tree          # set the Mesa build tree up with the chosen llvm-config
 make build NVRM_SRC=/path/to/nvidia-gb10-freebsd
 make test
 ```
+
+`make.sh` takes one command: `preflight`, `install-deps`, `configure`,
+`configure-tree`, `build`, `test`, `no-nouveau`, `no-gallium-nouveau` or
+`clean`. `configure-tree` configures only the Mesa build tree: it writes the
+native file and runs `meson setup` (with `--reconfigure` when the tree was
+set up with another `llvm-config`). `configure` prints the build options and
+builds nothing.
 
 `make build` builds libnvrm from `NVRM_SRC/lib/libnvrm`, then NVK with
 `-Dvulkan-drivers=nvk -Dnvk-kmd=nvrm`, then the probe. NVK and its ICD are
@@ -36,9 +44,22 @@ same LLVM). The native file is written at every build, and a build tree that
 was set up with another `llvm-config` is reconfigured with it, so the setting
 is never ignored. Set `LLVM_CONFIG=path` (make) or `MK_LLVM_CONFIG=path`
 (make.sh) to use another one; the default is `/usr/local/bin/llvm-config19`.
+`LLVM_CONFIG` wins over `MK_LLVM_CONFIG`, and every message names the
+variable that supplied the value.
+
 The value must be an absolute path to an executable file: it travels in the
 environment, never in the recipe, and a value that is not a path is refused
-before anything is built.
+before anything is built. The `llvm-config` must report the version `19.x`
+or `19.x.y`; one that fails, that says nothing, or that says something that
+is not a version is refused. The selected installation must have a
+pkg-config directory (`--prefix/libdata/pkgconfig` or `--libdir/pkgconfig`):
+when it has none, the build fails instead of taking the pkg-config path of
+the caller, which may belong to another LLVM.
+
+Only the commands that build Mesa check the `llvm-config`: `configure`,
+`configure-tree`, `build` and `test`. `install-deps`, `preflight`, `clean`
+and the usage work on a host that has no LLVM at all, so that LLVM 19 can be
+installed in the first place.
 
 ## nvk-nvrm-probe
 

@@ -14,6 +14,8 @@
 #include "ptx.h"
 
 #include <locale.h>
+#include <setjmp.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -21,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "util/memstream.h"
 #include "util/ralloc.h"
@@ -259,6 +262,91 @@ check_error(const char *name, const char *text,
             const char *msg, unsigned line, unsigned col)
 {
    check_error_len(name, text, strlen(text), msg, line, col);
+}
+
+/*
+ * The number of seconds a parse may take before the test gives up on it.
+ *
+ * A parser that loops on a token it never moves past would hang the test,
+ * the build and the machine with it.  The parse runs under an alarm, so
+ * that such a parser fails the case instead of waiting forever.
+ */
+#define PARSE_TIMEOUT_SECONDS 10
+
+static sigjmp_buf parse_jump;
+static volatile sig_atomic_t parse_timed_out;
+
+static void
+on_alarm(int sig)
+{
+   (void)sig;
+   parse_timed_out = 1;
+   siglongjmp(parse_jump, 1);
+}
+
+/*
+ * Parse the text with a time limit.
+ *
+ * The parse that does not finish in PARSE_TIMEOUT_SECONDS is given up on:
+ * the module is NULL and the diagnostic says so.
+ */
+static struct ptx_module *
+parse_text_timed(void *ctx, const char *text, size_t len, struct ptx_diag *diag)
+{
+   struct ptx_module *m;
+   struct sigaction sa;
+   struct sigaction old;
+
+   memset(&sa, 0, sizeof(sa));
+   sa.sa_handler = on_alarm;
+   sigemptyset(&sa.sa_mask);
+   /* The alarm breaks the parse out; it must not restart it. */
+   sa.sa_flags = 0;
+   sigaction(SIGALRM, &sa, &old);
+
+   parse_timed_out = 0;
+   if (sigsetjmp(parse_jump, 1) == 0) {
+      alarm(PARSE_TIMEOUT_SECONDS);
+      m = parse_text(ctx, text, len, diag);
+      alarm(0);
+   } else {
+      m = NULL;
+      memset(diag, 0, sizeof(*diag));
+      snprintf(diag->msg, sizeof(diag->msg),
+               "the parse did not finish in %d seconds",
+               PARSE_TIMEOUT_SECONDS);
+      diag->line = 1;
+      diag->col = 1;
+   }
+
+   sigaction(SIGALRM, &old, NULL);
+
+   return m;
+}
+
+/*
+ * The module must be refused with the named error, and the parse must not
+ * hang: it runs under the alarm of parse_text_timed.
+ */
+static void
+check_refused(const char *name, const char *text, const char *msg,
+              unsigned line, unsigned col)
+{
+   void *ctx = ralloc_context(NULL);
+   struct ptx_diag diag;
+   struct ptx_module *m = parse_text_timed(ctx, text, strlen(text), &diag);
+
+   if (m) {
+      check(false, name, "expected the error '%s', but the parse succeeded",
+            msg);
+   } else {
+      check(strcmp(diag.msg, msg) == 0 && diag.line == line &&
+            diag.col == col, name,
+            "expected '%s' at %u:%u, got '%s' at %u:%u",
+            msg, line, col, diag.msg, diag.line, diag.col);
+   }
+
+   ralloc_free(ctx);
 }
 
 /* The first instruction the match function accepts. */
@@ -1637,6 +1725,347 @@ test_unsized_array(void)
    ralloc_free(ctx);
 }
 
+/*
+ * The Review-open items of commit 355d79ed243 (Track #2426).
+ */
+
+/*
+ * A lexical error must stop the parser.
+ *
+ * The lexer failed: no token comes any more.  A loop that reads the token
+ * again without moving past it would run forever, so every loop that reads
+ * a token stops when the token does not come.  Each case below is one of
+ * the loops of the parser, and each one must be refused with the error of
+ * the lexer.
+ */
+static void
+test_lookahead_errors(void)
+{
+   /* The linkage loop of a module scope declaration. */
+   check_refused("error: a hash after .visible",
+                 ".version 9.0\n.visible #\n",
+                 "unexpected character '#'", 2, 10);
+
+   /* The same loop, with a second linkage word. */
+   check_refused("error: a hash after two linkage words",
+                 ".version 9.0\n.visible .visible #\n",
+                 "unexpected character '#'", 2, 19);
+
+   /* The loop that reads the numbers of a .loc line. */
+   check_refused("error: a hash after the number of a .loc",
+                 ".version 9.0\n.target sm_120\n.loc 1 #\n",
+                 "unexpected character '#'", 3, 8);
+
+   /* The loop that reads the attributes of a declaration. */
+   check_refused("error: a hash after the type of a declaration",
+                 ".version 9.0\n.target sm_120\n.shared .b32 #\n",
+                 "unexpected character '#'", 3, 14);
+
+   /* The loop that reads the list of the parameters. */
+   check_refused("error: a hash after a comma in a parameter list",
+                 ".version 9.0\n.target sm_120\n"
+                 ".visible .entry f(.param .b32 a, #)\n{\n}\n",
+                 "unexpected character '#'", 3, 34);
+
+   /* The loop that reads the elements of a vector. */
+   check_refused("error: a hash after a comma in a vector",
+                 ".version 9.0\n.target sm_120\n.visible .entry k()\n"
+                 "{\n\tmov.v2.b32 {%r1, #};\n}\n",
+                 "unexpected character '#'", 5, 19);
+
+   /* The loop that reads the modifiers of an instruction. */
+   check_refused("error: a hash after a modifier",
+                 ".version 9.0\n.target sm_120\n.visible .entry k()\n"
+                 "{\n\tld.global #\n}\n",
+                 "unexpected character '#'", 5, 12);
+
+   /* The loop that reads the list of the targets. */
+   check_refused("error: a hash after a comma in the target list",
+                 ".version 9.0\n.target sm_120, #\n",
+                 "unexpected character '#'", 2, 17);
+
+   /* The loop that reads the numbers of a performance directive. */
+   check_refused("error: a hash after a comma in .maxntid",
+                 ".version 9.0\n.target sm_120\n.visible .entry k()\n"
+                 "{\n\t.maxntid 1, #\n}\n",
+                 "unexpected character '#'", 5, 14);
+}
+
+/*
+ * The modifiers that carry a scope.
+ *
+ * PTX 8.x and 9.x write a scope inside a modifier: "ld.global.L1::
+ * no_allocate", "cp.async.bulk.shared::cluster" and "mma.sync.aligned.
+ * kind::mxf4".  The scope belongs to the word it stands in, and the
+ * modifier is kept whole.
+ */
+static void
+test_scope_modifiers(void)
+{
+   static const char source[] =
+      ".version 9.0\n"
+      ".target sm_120\n"
+      ".address_size 64\n"
+      ".visible .entry k(\n"
+      ".param .u64 .ptr .align 1 p0,\n"
+      ".param .u64 .ptr .align 1 p1\n"
+      ")\n"
+      "{\n"
+      "\t.reg .b32 %r<4>;\n"
+      "\tld.global.L1::no_allocate.b32 %r1, [p0];\n"
+      "\tcp.async.bulk.shared::cluster.global [p0], [p1];\n"
+      "\tmma.sync.aligned.kind::mxf4.row.col.f32.b16 "
+      "{%r1, %r2}, {%r3, %r4};\n"
+      "\tret;\n"
+      "}\n";
+   void *ctx = ralloc_context(NULL);
+   struct ptx_diag diag;
+   struct ptx_module *m = parse_text(ctx, source, sizeof(source) - 1, &diag);
+   const struct ptx_insn *insn;
+   char *text = NULL;
+   size_t len = 0;
+
+   if (!m) {
+      check(false, "the module with the scoped modifiers parses",
+            "%s at %u:%u", diag.msg, diag.line, diag.col);
+      ralloc_free(ctx);
+      return;
+   }
+   check(true, "the module with the scoped modifiers parses", "");
+
+   insn = find_insn_nth(m, "ld", 0);
+   check(insn && insn->nmodifiers == 3 &&
+         !strcmp(insn->modifiers[0], "global") &&
+         !strcmp(insn->modifiers[1], "L1::no_allocate") &&
+         !strcmp(insn->modifiers[2], "b32"),
+         "ld.global.L1::no_allocate.b32 keeps the modifier whole",
+         "got %u modifiers", insn ? insn->nmodifiers : 0);
+
+   insn = find_insn_nth(m, "cp", 0);
+   check(insn && insn->nmodifiers == 4 &&
+         !strcmp(insn->modifiers[0], "async") &&
+         !strcmp(insn->modifiers[1], "bulk") &&
+         !strcmp(insn->modifiers[2], "shared::cluster") &&
+         !strcmp(insn->modifiers[3], "global"),
+         "cp.async.bulk.shared::cluster.global keeps the modifier whole",
+         "got %u modifiers", insn ? insn->nmodifiers : 0);
+
+   insn = find_insn_nth(m, "mma", 0);
+   check(insn && insn->nmodifiers == 7 &&
+         !strcmp(insn->modifiers[2], "kind::mxf4"),
+         "mma.sync.aligned.kind::mxf4 keeps the modifier whole",
+         "got %u modifiers", insn ? insn->nmodifiers : 0);
+
+   /* The printer writes the scope back, and the text parses again. */
+   print_to_string(m, &text, &len);
+   check(text && strstr(text, "ld.global.L1::no_allocate.b32") &&
+         strstr(text, "cp.async.bulk.shared::cluster.global") &&
+         strstr(text, "mma.sync.aligned.kind::mxf4"),
+         "the printer writes the scoped modifiers back", "got '%s'",
+         text ? text : "");
+   free(text);
+
+   check_round_trip("the round trip of the scoped modifiers", source,
+                    sizeof(source) - 1);
+
+   /*
+    * A scope that is not followed by an identifier is not a scope: the
+    * word ends there and the error names it.
+    */
+   check_refused("error: a scope with no identifier after it",
+                 ".version 9.0\n.target sm_120\n.visible .entry k()\n"
+                 "{\n\tld.global.L1:: b32 %r1, [%rd1];\n}\n",
+                 "a '::' in a modifier must be followed by an identifier",
+                 5, 14);
+
+   ralloc_free(ctx);
+}
+
+/*
+ * The tree of a module has a size.
+ *
+ * A module that holds more statements than the limit, or more operands
+ * than the limit, is refused with a named error.
+ */
+static void
+test_tree_limits(void)
+{
+   void *ctx = ralloc_context(NULL);
+   struct ptx_diag diag;
+   struct ptx_module *m;
+   char expect[128];
+   size_t size;
+   size_t used;
+   char *text;
+   unsigned i;
+
+   /* A function with one statement too many. */
+   size = 1024 * 1024;
+   text = malloc(size);
+   if (!text) {
+      check(false, "the module with too many statements is refused",
+            "cannot build the module");
+      ralloc_free(ctx);
+      return;
+   }
+
+   used = (size_t)snprintf(text, size,
+                           ".version 9.0\n.target sm_120\n.address_size 64\n"
+                           ".visible .entry k()\n{\n");
+   for (i = 0; i <= PTX_MAX_STMTS_PER_FUNC; i++)
+      used += (size_t)snprintf(text + used, size - used, "\tret;\n");
+   used += (size_t)snprintf(text + used, size - used, "}\n");
+
+   snprintf(expect, sizeof(expect),
+            "the function holds more than %u statements",
+            PTX_MAX_STMTS_PER_FUNC);
+   m = parse_text(ctx, text, used, &diag);
+   if (m) {
+      check(false, "the module with too many statements is refused",
+            "the parse succeeded");
+   } else {
+      check(strcmp(diag.msg, expect) == 0,
+            "the module with too many statements is refused",
+            "expected '%s', got '%s' at %u:%u", expect, diag.msg, diag.line,
+            diag.col);
+   }
+   free(text);
+
+   /* A module with one operand too many. */
+   size = 16 * 1024 * 1024;
+   text = malloc(size);
+   if (!text) {
+      check(false, "the module with too many operands is refused",
+            "cannot build the module");
+      ralloc_free(ctx);
+      return;
+   }
+
+   used = (size_t)snprintf(text, size,
+                           ".version 9.0\n.target sm_120\n.address_size 64\n");
+   /*
+    * Every instruction holds eight operands, so the module reaches the
+    * limit in an eighth of the statements the limit of the statements
+    * allows.
+    */
+   for (i = 0; i < PTX_MAX_OPERANDS_PER_MODULE / 8 + 1; i++) {
+      used += (size_t)snprintf(text + used, size - used,
+                               ".visible .entry k%u()\n{\n"
+                               "\tadd.s64 %%r1, %%r2, %%r3, %%r4, %%r5, "
+                               "%%r6, %%r7, %%r8;\n}\n",
+                               i);
+   }
+
+   snprintf(expect, sizeof(expect),
+            "the module holds more than %u operands",
+            PTX_MAX_OPERANDS_PER_MODULE);
+   m = parse_text(ctx, text, used, &diag);
+   if (m) {
+      check(false, "the module with too many operands is refused",
+            "the parse succeeded");
+   } else {
+      check(strcmp(diag.msg, expect) == 0,
+            "the module with too many operands is refused",
+            "expected '%s', got '%s' at %u:%u", expect, diag.msg, diag.line,
+            diag.col);
+   }
+   free(text);
+
+   ralloc_free(ctx);
+}
+
+/*
+ * The lists of the module copy their elements when they grow, and every
+ * list of the tree is counted: the body of a function and the list of its
+ * parameters as well as the lists of the module scope.
+ */
+static void
+test_list_copies(void)
+{
+   void *ctx = ralloc_context(NULL);
+   struct ptx_diag diag;
+   struct ptx_module *m;
+   char *text;
+   size_t size = 64 * 1024;
+   size_t used;
+   unsigned i;
+
+   /* A function with a body of five thousand statements. */
+   text = malloc(size);
+   if (!text) {
+      check(false, "the copies of the body are counted",
+            "cannot build the module");
+      ralloc_free(ctx);
+      return;
+   }
+
+   used = (size_t)snprintf(text, size,
+                           ".version 9.0\n.target sm_120\n.address_size 64\n"
+                           ".visible .entry k()\n{\n");
+   for (i = 0; i < 5000; i++)
+      used += (size_t)snprintf(text + used, size - used, "\tret;\n");
+   used += (size_t)snprintf(text + used, size - used, "}\n");
+
+   m = parse_text(ctx, text, used, &diag);
+   if (!m) {
+      check(false, "the copies of the body are counted",
+            "%s at %u:%u", diag.msg, diag.line, diag.col);
+   } else {
+      check(m->list_copies >= 5000,
+            "the copies of the body are counted",
+            "expected at least 5000 copies, got %llu",
+            (unsigned long long)m->list_copies);
+   }
+   free(text);
+
+   /* A function with five hundred parameters. */
+   text = malloc(size);
+   if (!text) {
+      check(false, "the copies of the parameter list are counted",
+            "cannot build the module");
+      ralloc_free(ctx);
+      return;
+   }
+
+   used = (size_t)snprintf(text, size,
+                           ".version 9.0\n.target sm_120\n.address_size 64\n"
+                           ".visible .entry k(");
+   for (i = 0; i < 500; i++)
+      used += (size_t)snprintf(text + used, size - used,
+                               "%s.param .u32 p%u", i ? ", " : "", i);
+   used += (size_t)snprintf(text + used, size - used, ")\n{\n\tret;\n}\n");
+
+   m = parse_text(ctx, text, used, &diag);
+   if (!m) {
+      check(false, "the copies of the parameter list are counted",
+            "%s at %u:%u", diag.msg, diag.line, diag.col);
+   } else {
+      check(m->list_copies >= 500,
+            "the copies of the parameter list are counted",
+            "expected at least 500 copies, got %llu",
+            (unsigned long long)m->list_copies);
+   }
+   free(text);
+
+   ralloc_free(ctx);
+}
+
+/*
+ * A module names its version and its target: without them it is not a
+ * module.
+ */
+static void
+test_required_directives(void)
+{
+   check_refused("error: a module without a .version",
+                 ".target sm_120\n",
+                 "the module has no .version directive", 2, 1);
+
+   check_refused("error: a module without a .target",
+                 ".version 9.0\n",
+                 "the module has no .target directive", 2, 1);
+}
+
 int
 main(void)
 {
@@ -1660,6 +2089,11 @@ main(void)
    test_float_literals();
    test_perf_directives();
    test_unsized_array();
+   test_lookahead_errors();
+   test_scope_modifiers();
+   test_tree_limits();
+   test_list_copies();
+   test_required_directives();
 
    printf("%u checks passed, %u failed\n", ok_count, bad_count);
 

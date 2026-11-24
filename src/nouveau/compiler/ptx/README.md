@@ -41,6 +41,20 @@ float literal takes no suffix and is always 64 bits wide (the ISA, section
 4.5).  A string keeps the spelling it had in the source, so that a pragma
 with an escape in it is written back with the same escape.
 
+A modifier that carries a scope keeps it whole: `ld.global.L1::no_allocate`,
+`cp.async.bulk.shared::cluster` and `mma.sync.aligned.kind::mxf4` are read
+as one word each, and the modifier is stored as `L1::no_allocate`.  A `::`
+that is not followed by an identifier is an error, not a modifier.
+
+A module names its version and its target: a module without `.version` or
+without `.target` is refused with a named error.
+
+The tree of a module has a size.  A function may hold `PTX_MAX_STMTS_PER_FUNC`
+(65536) statements and a module may hold `PTX_MAX_OPERANDS_PER_MODULE`
+(1048576) operands; a module that holds more is refused with a named error.
+The limits are above what the PTX of a compiler holds, so that no real
+module is refused.
+
 ## What slice 1 does not cover
 
 - initializers (`.shared .b8 buf[4] = {0}` is refused on purpose);

@@ -31,8 +31,18 @@ jobs=${MK_JOBS:-}
 # both are installed and then cannot find LLVMSPIRVLib.  The llvm-config to
 # use is named in a meson native file; LLVM_CONFIG (or MK_LLVM_CONFIG)
 # overrides it.  The value comes from the environment, so it is never read
-# as shell source.
-llvm_config=${LLVM_CONFIG:-${MK_LLVM_CONFIG:-/usr/local/bin/llvm-config19}}
+# as shell source.  The name of the variable that supplied the value is
+# kept, so that every message names the control the user has to correct.
+if [ -n "${LLVM_CONFIG:-}" ]; then
+	llvm_config=$LLVM_CONFIG
+	llvm_config_var=LLVM_CONFIG
+elif [ -n "${MK_LLVM_CONFIG:-}" ]; then
+	llvm_config=$MK_LLVM_CONFIG
+	llvm_config_var=MK_LLVM_CONFIG
+else
+	llvm_config=/usr/local/bin/llvm-config19
+	llvm_config_var=LLVM_CONFIG
+fi
 yes=0
 if [ "${MK_YES:-0}" = 1 ] || [ "${MK_ASSUME_YES:-0}" = 1 ]; then
 	yes=1
@@ -44,36 +54,74 @@ rust rust-bindgen-cli llvm19 libclc-llvm19 spirv-llvm-translator-llvm19 \
 spirv-tools glslang libdrm expat bison vulkan-headers vulkan-loader \
 vulkan-tools"
 TOOLS="git cc meson ninja rustc bindgen python3 pkg-config vulkaninfo"
-USAGE="usage: make.sh <preflight|install-deps|configure|configure-tree|build|test|no-nouveau|no-gallium-nouveau|clean>"
+# CloudBSD fork: one command per line, with a short description, so that no
+# command name is split when the terminal is eighty columns wide.
+USAGE="usage: make.sh <command>
+  preflight           report the tools that are missing
+  install-deps        install the packages the build needs (asks first)
+  configure           print the build options
+  configure-tree      set the Mesa build tree up with the chosen llvm-config
+  build               build libnvrm and NVK into WORK/prefix
+  test                run the tests on libnvrm's fake backend
+  no-nouveau          fail when a file names nouveau
+  no-gallium-nouveau  fail when the gallium nouveau sources are built
+  clean               remove the build directory"
+
+# Is the version the version of LLVM 19?
+#
+# Only "19.x" and "19.x.y" are accepted, with the x and the y digits: a
+# version that is empty, that is not a version at all ("19junk", "190")
+# or that could not be read is refused.
+is_llvm19_version() {
+	case $1 in
+	19.*) ;;
+	*) return 1 ;;
+	esac
+	rest=${1#19.}
+	minor=${rest%%.*}
+	case $minor in
+	''|*[!0-9]*) return 1 ;;
+	esac
+	case $rest in
+	*.*)
+		patch=${rest#*.}
+		case $patch in
+		''|*[!0-9]*) return 1 ;;
+		esac
+		case $patch in
+		*.*) return 1 ;;
+		esac
+		;;
+	esac
+	return 0
+}
 
 # CloudBSD fork: the llvm-config must be the path of an executable file.
-# A value that is not one is refused before anything is built.
+# A value that is not one is refused before anything is built.  Only the
+# commands that build Mesa need it: the command that installs LLVM 19,
+# the preflight, the usage and the clean must work without it.
 check_llvm_config() {
 	case $llvm_config in
 	/*) ;;
-	*) die "LLVM_CONFIG is not an absolute path: '$(show_value "$llvm_config")'" ;;
+	*) die "$llvm_config_var is not an absolute path: '$(show_value "$llvm_config")'; set $llvm_config_var=/absolute/path/to/llvm-config19" ;;
 	esac
 	[ -f "$llvm_config" ] ||
-		die "LLVM_CONFIG is not a file: '$(show_value "$llvm_config")'"
+		die "$llvm_config_var is not a file: '$(show_value "$llvm_config")'"
 	[ -x "$llvm_config" ] ||
-		die "LLVM_CONFIG is not executable: '$(show_value "$llvm_config")'"
+		die "$llvm_config_var is not executable: '$(show_value "$llvm_config")'"
 	if printf '%s' "$llvm_config" | grep -q "['\"]"; then
-		die "LLVM_CONFIG holds a quote: '$(show_value "$llvm_config")'"
+		die "$llvm_config_var holds a quote: '$(show_value "$llvm_config")'"
 	fi
 	[ "$(printf '%s' "$llvm_config" | wc -l)" -eq 0 ] ||
-		die "LLVM_CONFIG holds a newline: '$(show_value "$llvm_config")'"
+		die "$llvm_config_var holds a newline: '$(show_value "$llvm_config")'"
 	# CloudBSD fork: the build needs LLVM 19, because LLVMSPIRVLib comes
 	# from that installation.  A llvm-config of another version is
 	# refused with a message that says what is needed.
 	version=$("$llvm_config" --version 2>/dev/null) || version=''
-	case $version in
-	19*) ;;
-	'') ;;
-	*) die "LLVM_CONFIG is LLVM $(show_value "$version"); this build needs LLVM 19" ;;
-	esac
+	if ! is_llvm19_version "$version"; then
+		die "$llvm_config_var is not LLVM 19: '$(show_value "$version")'; this build needs LLVM 19"
+	fi
 }
-
-check_llvm_config
 
 # Builds and tests run as a normal user: the Python and meson scripts of the
 # tree never run as root, and no root-owned files land in the build tree.
@@ -112,9 +160,14 @@ native_file() { printf '%s\n' "$work/native-llvm.ini"; }
 # build must use.  Meson would otherwise take llvm-config23 and fail to find
 # LLVMSPIRVLib.  The file is written at every build, so that the build tree
 # always knows which llvm-config it was set up with.
+#
+# The file is written under a name of its own, made by mktemp inside the
+# build directory, and renamed into place: the name of a file that is being
+# written must not be predictable, and a reader of the build directory must
+# never see half a file.
 write_native_file() {
 	mkdir -p "$work"
-	tmp=$(native_file).tmp
+	tmp=$(mktemp "$work/native-llvm.ini.XXXXXX")
 	{
 		printf '%s\n' '[binaries]'
 		printf "llvm-config = '%s'\n" "$llvm_config"
@@ -155,15 +208,32 @@ llvm_pkgconfig_dir() {
 	return 1
 }
 
+# The directories that were looked at, for the message of the failure.
+llvm_pkgconfig_tried() {
+	prefix=$("$llvm_config" --prefix 2>/dev/null) || prefix=''
+	libdir=$("$llvm_config" --libdir 2>/dev/null) || libdir=''
+	if [ -n "$prefix" ]; then
+		printf '%s\n' "$prefix/libdata/pkgconfig"
+	fi
+	if [ -n "$libdir" ]; then
+		printf '%s\n' "$libdir/pkgconfig"
+	fi
+	return 0
+}
+
 # The whole PKG_CONFIG_PATH: the directory of the selected llvm-config
 # first, then the one of the caller.
+#
+# When the selected installation has no pkg-config directory, the build
+# fails: the directory of the caller may belong to another LLVM, and the
+# build would then use two LLVMs at once.
 llvm_pkgconfig_path() {
 	dir=$(llvm_pkgconfig_dir) || dir=''
-	if [ -n "$dir" ]; then
-		printf '%s\n' "$dir${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-	else
-		printf '%s\n' "${PKG_CONFIG_PATH:-}"
+	if [ -z "$dir" ]; then
+		tried=$(llvm_pkgconfig_tried | tr '\n' ' ')
+		die "the pkg-config directory of the $llvm_config_var '$llvm_config' was not found; tried: $tried"
 	fi
+	printf '%s\n' "$dir${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 }
 
 do_preflight() {
@@ -212,6 +282,7 @@ mesa_opts_run() {
 }
 
 do_configure() {
+	check_llvm_config
 	printf '%s\n' "nothing to configure"
 	mesa_opts_run printf '%s\n' "build options:"
 	printf '%s\n' "libnvrm from: $nvrm_src/lib/libnvrm" \
@@ -235,12 +306,14 @@ build_libnvrm() {
 # was set up with another llvm-config is reconfigured with the native file,
 # so that the setting is never ignored.
 configure_mesa() {
+	check_llvm_config
 	write_native_file
 	# CloudBSD fork: LLVMSPIRVLib comes from the pkgconfig directory of
 	# the selected llvm-config, and meson resolves the dependencies when it
 	# sets the build tree up: the path is in the environment before meson
 	# runs.
-	PKG_CONFIG_PATH=$(llvm_pkgconfig_path)
+	pkg_path=$(llvm_pkgconfig_path) || exit 1
+	PKG_CONFIG_PATH=$pkg_path
 	export PKG_CONFIG_PATH
 	if [ ! -f "$(mesa_dir)/build.ninja" ]; then
 		mesa_opts_run meson setup "$(mesa_dir)" "$top" \
@@ -271,6 +344,7 @@ build_probe() {
 
 do_build() {
 	refuse_root
+	check_llvm_config
 	build_libnvrm
 	build_mesa
 	build_probe
@@ -460,6 +534,7 @@ upstream_copies_match() {
 
 do_test() {
 	refuse_root
+	check_llvm_config
 	[ -x "$(probe_bin)" ] && [ -f "$(icd_json)" ] || die "no build in $work: run make build first (with the same WORK)"
 	mkdir -p "$work/tmp" "$work/test"
 	out=$work/test
@@ -607,5 +682,5 @@ test) do_test ;;
 no-nouveau) no_nouveau "$@" ;;
 no-gallium-nouveau) no_gallium_nouveau "$@" ;;
 clean) do_clean ;;
-*) die "$USAGE" ;;
+*) printf '%s\n' "$USAGE" >&2; exit 1 ;;
 esac

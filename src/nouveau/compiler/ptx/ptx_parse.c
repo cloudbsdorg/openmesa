@@ -108,6 +108,12 @@ struct ptx_parser {
    struct ptx_dyn target_flags;
    struct ptx_dyn funcs;
    struct ptx_dyn decls;
+   /* The statements of the function being read, and the operands of the
+    * module: both have a limit, so that a module cannot grow its tree
+    * without bound.
+    */
+   unsigned func_stmts;
+   uint64_t operands;
 };
 
 static void
@@ -188,6 +194,42 @@ ptx_oom(struct ptx_parser *p)
 }
 
 /*
+ * Count one statement of the function that is being read.  A function that
+ * holds more statements than the limit is refused, so that a module cannot
+ * grow its tree without bound.
+ */
+static bool
+ptx_count_stmt(struct ptx_parser *p)
+{
+   p->func_stmts++;
+
+   if (p->func_stmts > PTX_MAX_STMTS_PER_FUNC) {
+      return ptx_error(p, &p->tok,
+                       "the function holds more than %u statements",
+                       PTX_MAX_STMTS_PER_FUNC);
+   }
+
+   return true;
+}
+
+/*
+ * Count one operand of the module.  A module that holds more operands than
+ * the limit is refused, for the same reason.
+ */
+static bool
+ptx_count_operand(struct ptx_parser *p)
+{
+   p->operands++;
+
+   if (p->operands > PTX_MAX_OPERANDS_PER_MODULE) {
+      return ptx_error(p, &p->tok, "the module holds more than %u operands",
+                       PTX_MAX_OPERANDS_PER_MODULE);
+   }
+
+   return true;
+}
+
+/*
  * Read the next token into p->tok.
  *
  * An error of the lexer is sticky: the parser remembers it, the token
@@ -198,8 +240,17 @@ ptx_oom(struct ptx_parser *p)
 static bool
 ptx_next(struct ptx_parser *p)
 {
-   if (p->failed)
+   if (p->failed) {
+      /*
+       * No token comes any more.  The current token becomes an error token,
+       * so that a loop that tests it stops instead of running again and
+       * again on the token it already has.
+       */
+      p->tok.kind = PTX_TOKEN_ERROR;
+      p->tok.line = p->diag.line;
+      p->tok.col = p->diag.col;
       return false;
+   }
 
    if (p->has_ahead) {
       p->tok = p->ahead;
@@ -495,7 +546,8 @@ ptx_parse_target(struct ptx_parser *p)
       if (!ptx_parse_target_word(p))
          return false;
       if (ptx_is_punct(p, ",")) {
-         ptx_next(p);
+         if (!ptx_next(p))
+            return false;
          continue;
       }
       break;
@@ -528,13 +580,14 @@ ptx_parse_address_size(struct ptx_parser *p, struct ptx_module *m)
 static bool
 ptx_skip_file(struct ptx_parser *p)
 {
-   ptx_next(p); /* the .file */
-   if (p->tok.kind == PTX_TOKEN_INT)
-      ptx_next(p);
-   if (p->tok.kind == PTX_TOKEN_STRING)
-      ptx_next(p);
-   if (ptx_is_punct(p, ";"))
-      ptx_next(p);
+   if (!ptx_next(p)) /* the .file */
+      return false;
+   if (p->tok.kind == PTX_TOKEN_INT && !ptx_next(p))
+      return false;
+   if (p->tok.kind == PTX_TOKEN_STRING && !ptx_next(p))
+      return false;
+   if (ptx_is_punct(p, ";") && !ptx_next(p))
+      return false;
 
    return true;
 }
@@ -543,14 +596,17 @@ ptx_skip_file(struct ptx_parser *p)
 static bool
 ptx_skip_loc(struct ptx_parser *p)
 {
-   ptx_next(p); /* the .loc */
-   if (ptx_is_dotword(p, ".file"))
-      ptx_next(p);
+   if (!ptx_next(p)) /* the .loc */
+      return false;
+   if (ptx_is_dotword(p, ".file") && !ptx_next(p))
+      return false;
    /* Time: O(n) Space: O(1) */
-   while (p->tok.kind == PTX_TOKEN_INT)
-      ptx_next(p);
-   if (ptx_is_punct(p, ";"))
-      ptx_next(p);
+   while (p->tok.kind == PTX_TOKEN_INT) {
+      if (!ptx_next(p))
+         return false;
+   }
+   if (ptx_is_punct(p, ";") && !ptx_next(p))
+      return false;
 
    return true;
 }
@@ -569,29 +625,34 @@ ptx_parse_decl_attrs(struct ptx_parser *p, struct ptx_decl *d)
          break;
 
       if (!strcmp(t->text, ".align")) {
-         ptx_next(p);
+         if (!ptx_next(p))
+            return false;
          if (p->tok.kind != PTX_TOKEN_INT)
             return ptx_error(p, &p->tok, "expected an alignment");
          /* The alignment is a positive number that fits in the field. */
          if (p->tok.bits == 0 || p->tok.bits > UINT_MAX)
             return ptx_error(p, &p->tok, "the alignment is out of range");
          d->align = (unsigned)p->tok.bits;
-         ptx_next(p);
+         if (!ptx_next(p))
+            return false;
          continue;
       }
       if (!strcmp(t->text, ".v2") || !strcmp(t->text, ".v4")) {
          d->vec = (unsigned)(t->text[2] - '0');
-         ptx_next(p);
+         if (!ptx_next(p))
+            return false;
          continue;
       }
       if (!strcmp(t->text, ".ptr")) {
          d->is_ptr = true;
-         ptx_next(p);
+         if (!ptx_next(p))
+            return false;
          continue;
       }
       if (!ptx_type_from_name(t->text, &d->type))
          return ptx_error(p, t, "unknown declaration attribute %s", t->text);
-      ptx_next(p);
+      if (!ptx_next(p))
+         return false;
    }
 
    return true;
@@ -729,11 +790,13 @@ ptx_parse_param_list(struct ptx_parser *p, struct ptx_decl **out,
          return ptx_oom(p);
 
       if (ptx_is_punct(p, ",")) {
-         ptx_next(p);
+         if (!ptx_next(p))
+            return false;
          continue;
       }
       if (ptx_is_punct(p, ")")) {
-         ptx_next(p);
+         if (!ptx_next(p))
+            return false;
          break;
       }
       return ptx_error(p, &p->tok, "expected ',' or ')'");
@@ -741,6 +804,9 @@ ptx_parse_param_list(struct ptx_parser *p, struct ptx_decl **out,
 
    *out = params.data;
    *nout = params.n;
+
+   /* The list of the parameters copied its elements when it grew. */
+   p->copies += params.copies;
 
    return true;
 }
@@ -829,7 +895,8 @@ ptx_parse_vector(struct ptx_parser *p, struct ptx_operand *op)
       op->elems[op->nelems++] = e;
 
       if (ptx_is_punct(p, ",")) {
-         ptx_next(p);
+         if (!ptx_next(p))
+            return false;
          continue;
       }
       break;
@@ -837,7 +904,8 @@ ptx_parse_vector(struct ptx_parser *p, struct ptx_operand *op)
 
    if (!ptx_is_punct(p, "}"))
       return ptx_error(p, &p->tok, "expected '}'");
-   ptx_next(p);
+   if (!ptx_next(p))
+      return false;
 
    return true;
 }
@@ -995,14 +1063,17 @@ ptx_parse_insn(struct ptx_parser *p, struct ptx_insn *insn)
       if (insn->nmodifiers == PTX_MAX_MODIFIERS)
          return ptx_error(p, &p->tok, "too many modifiers");
       /* The modifiers keep their order and lose the dot: "ld.global.b32"
-       * has the modifiers "global" and "b32".
+       * has the modifiers "global" and "b32".  A modifier that carries a
+       * scope keeps it whole: "ld.global.L1::no_allocate" has the modifiers
+       * "global" and "L1::no_allocate".
        */
       insn->modifiers[insn->nmodifiers] =
          ralloc_strdup(p->ctx, p->tok.text + 1);
       if (!insn->modifiers[insn->nmodifiers])
          return ptx_oom(p);
       insn->nmodifiers++;
-      ptx_next(p);
+      if (!ptx_next(p))
+         return false;
    }
 
    if (!ptx_is_punct(p, ";")) {
@@ -1014,10 +1085,13 @@ ptx_parse_insn(struct ptx_parser *p, struct ptx_insn *insn)
             return ptx_error(p, &p->tok, "too many operands");
          if (!ptx_parse_operand(p, &op, false))
             return false;
+         if (!ptx_count_operand(p))
+            return false;
          insn->operands[insn->noperands++] = op;
 
          if (ptx_is_punct(p, ",")) {
-            ptx_next(p);
+            if (!ptx_next(p))
+               return false;
             continue;
          }
          break;
@@ -1048,10 +1122,12 @@ ptx_parse_perf_values(struct ptx_parser *p, unsigned *values, unsigned *count,
                           directive);
       }
       values[(*count)++] = (unsigned)p->tok.bits;
-      ptx_next(p);
+      if (!ptx_next(p))
+         return false;
 
       if (ptx_is_punct(p, ",")) {
-         ptx_next(p);
+         if (!ptx_next(p))
+            return false;
          continue;
       }
       break;
@@ -1067,6 +1143,23 @@ ptx_is_perf_directive(const char *name)
    return !strcmp(name, ".maxntid") || !strcmp(name, ".reqntid") ||
           !strcmp(name, ".minnctapersm") || !strcmp(name, ".maxnreg") ||
           !strcmp(name, ".pragma");
+}
+
+/* Read the number of a performance directive that holds one. */
+static bool
+ptx_parse_perf_number(struct ptx_parser *p, unsigned *value,
+                      const char *directive)
+{
+   if (p->tok.kind != PTX_TOKEN_INT)
+      return ptx_error(p, &p->tok, "expected a number");
+   /* The value must fit in the field it is stored in. */
+   if (p->tok.bits == 0 || p->tok.bits > UINT_MAX) {
+      return ptx_error(p, &p->tok, "the value of %s is out of range",
+                       directive);
+   }
+   *value = (unsigned)p->tok.bits;
+
+   return ptx_next(p);
 }
 
 /*
@@ -1087,7 +1180,8 @@ ptx_parse_perf_directives(struct ptx_parser *p, struct ptx_func *f)
       bool is_maxnreg = !strcmp(p->tok.text, ".maxnreg");
       bool is_pragma = !strcmp(p->tok.text, ".pragma");
 
-      ptx_next(p);
+      if (!ptx_next(p))
+         return false;
 
       if (is_maxntid) {
          if (!ptx_parse_perf_values(p, f->maxntid, &f->nmaxntid, ".maxntid"))
@@ -1096,36 +1190,26 @@ ptx_parse_perf_directives(struct ptx_parser *p, struct ptx_func *f)
          if (!ptx_parse_perf_values(p, f->reqntid, &f->nreqntid, ".reqntid"))
             return false;
       } else if (is_minnctapersm) {
-         if (p->tok.kind != PTX_TOKEN_INT)
-            return ptx_error(p, &p->tok, "expected a number");
-         if (p->tok.bits == 0 || p->tok.bits > UINT_MAX) {
-            return ptx_error(p, &p->tok,
-                             "the value of .minnctapersm is out of range");
-         }
-         f->minnctapersm = (unsigned)p->tok.bits;
-         ptx_next(p);
+         if (!ptx_parse_perf_number(p, &f->minnctapersm, ".minnctapersm"))
+            return false;
       } else if (is_maxnreg) {
-         if (p->tok.kind != PTX_TOKEN_INT)
-            return ptx_error(p, &p->tok, "expected a number");
-         if (p->tok.bits == 0 || p->tok.bits > UINT_MAX) {
-            return ptx_error(p, &p->tok,
-                             "the value of .maxnreg is out of range");
-         }
-         f->maxnreg = (unsigned)p->tok.bits;
-         ptx_next(p);
+         if (!ptx_parse_perf_number(p, &f->maxnreg, ".maxnreg"))
+            return false;
       } else if (is_pragma) {
          if (p->tok.kind != PTX_TOKEN_STRING)
             return ptx_error(p, &p->tok, "expected a string");
          f->pragma = ralloc_strdup(p->ctx, p->tok.text);
          if (!f->pragma)
             return ptx_oom(p);
-         ptx_next(p);
+         if (!ptx_next(p))
+            return false;
       }
 
       /* The directives end with a semicolon. */
       if (!ptx_is_punct(p, ";"))
          return ptx_error(p, &p->tok, "expected ';'");
-      ptx_next(p);
+      if (!ptx_next(p))
+         return false;
    }
 
    return true;
@@ -1177,8 +1261,10 @@ ptx_parse_stmt(struct ptx_parser *p, struct ptx_func *f, struct ptx_dyn *stmts)
          stmt.u.label = ralloc_strdup(p->ctx, t->text);
          if (!stmt.u.label)
             return ptx_oom(p);
-         ptx_next(p);
-         ptx_next(p);
+         if (!ptx_next(p))
+            return false;
+         if (!ptx_next(p))
+            return false;
       } else {
          if (!ptx_parse_insn(p, &stmt.u.insn))
             return false;
@@ -1186,6 +1272,8 @@ ptx_parse_stmt(struct ptx_parser *p, struct ptx_func *f, struct ptx_dyn *stmts)
       }
    }
 
+   if (!ptx_count_stmt(p))
+      return false;
    if (!dyn_add(stmts, &stmt))
       return ptx_oom(p);
 
@@ -1226,15 +1314,19 @@ ptx_parse_scope(struct ptx_parser *p, struct ptx_func *f, struct ptx_dyn *stmts,
          stmt.kind = PTX_STMT_SCOPE;
          stmt.line = t->line;
          dyn_init(&inner, p->ctx, sizeof(struct ptx_stmt));
-         ptx_next(p); /* the '{' */
+         if (!ptx_next(p)) /* the '{' */
+            return false;
          if (!ptx_parse_scope(p, f, &inner, depth + 1))
             return false;
          if (!ptx_is_punct(p, "}"))
             return ptx_error(p, &p->tok, "expected '}'");
-         ptx_next(p); /* the '}' */
+         if (!ptx_next(p)) /* the '}' */
+            return false;
          stmt.u.scope.stmts = inner.data;
          stmt.u.scope.nstmts = inner.n;
          p->copies += inner.copies;
+         if (!ptx_count_stmt(p))
+            return false;
          if (!dyn_add(stmts, &stmt))
             return ptx_oom(p);
          continue;
@@ -1252,16 +1344,21 @@ ptx_parse_body(struct ptx_parser *p, struct ptx_func *f)
    struct ptx_dyn stmts;
 
    dyn_init(&stmts, p->ctx, sizeof(struct ptx_stmt));
-   ptx_next(p); /* the '{' */
+   if (!ptx_next(p)) /* the '{' */
+      return false;
 
    if (!ptx_parse_scope(p, f, &stmts, 0))
       return false;
    if (!ptx_is_punct(p, "}"))
       return ptx_error(p, &p->tok, "expected '}'");
-   ptx_next(p); /* the '}' */
+   if (!ptx_next(p)) /* the '}' */
+      return false;
 
    f->stmts = stmts.data;
    f->nstmts = stmts.n;
+
+   /* The list of the statements copied its elements when it grew. */
+   p->copies += stmts.copies;
 
    return true;
 }
@@ -1277,11 +1374,16 @@ ptx_parse_func(struct ptx_parser *p)
    memset(&f, 0, sizeof(f));
    f.line = p->tok.line;
 
+   /* The statements of a function are counted on their own. */
+   p->func_stmts = 0;
+
    /* The linkage words come first. */
    /* Time: O(n) Space: O(1) */
    while (p->tok.kind == PTX_TOKEN_DOTWORD &&
-          ptx_linkage_from_name(p->tok.text, &linkage))
-      ptx_next(p);
+          ptx_linkage_from_name(p->tok.text, &linkage)) {
+      if (!ptx_next(p))
+         return false;
+   }
 
    if (ptx_is_dotword(p, ".entry")) {
       is_entry = true;
@@ -1343,8 +1445,10 @@ ptx_parse_module_decl(struct ptx_parser *p)
    /* A declaration may carry a linkage word: ".extern .shared ...". */
    /* Time: O(n) Space: O(1) */
    while (p->tok.kind == PTX_TOKEN_DOTWORD &&
-          ptx_linkage_from_name(p->tok.text, &linkage))
-      ptx_next(p);
+          ptx_linkage_from_name(p->tok.text, &linkage)) {
+      if (!ptx_next(p))
+         return false;
+   }
 
    if (!ptx_parse_decl(p, &d, false))
       return false;
@@ -1390,7 +1494,15 @@ ptx_parse_module_item(struct ptx_parser *p, struct ptx_module *m)
       /* A linkage word may start a function or a declaration. */
       const struct ptx_token *next = ptx_peek(p);
 
-      if (next && next->kind == PTX_TOKEN_DOTWORD &&
+      /*
+       * A lookahead that failed ends the module: the lexer has recorded
+       * the error and no token comes any more.  The module is not read
+       * further, so that no loop runs again on the token it already has.
+       */
+      if (!next)
+         return false;
+
+      if (next->kind == PTX_TOKEN_DOTWORD &&
           (!strcmp(next->text, ".entry") || !strcmp(next->text, ".func")))
          return ptx_parse_func(p);
 
@@ -1413,11 +1525,23 @@ ptx_parse_module(struct ptx_parser *p, struct ptx_module *m)
    /* Time: O(n) Space: O(n) */
    for (;;) {
       if (p->tok.kind == PTX_TOKEN_EOF)
-         return true;
+         break;
 
       if (!ptx_parse_module_item(p, m))
          return false;
    }
+
+   /*
+    * A module names its version and its target: the PTX ISA wants both,
+    * and a module without them is not a module.  The error is at the end
+    * of the module, where the directive should have stood.
+    */
+   if (m->version_major == 0)
+      return ptx_error(p, &p->tok, "the module has no .version directive");
+   if (p->targets.n == 0)
+      return ptx_error(p, &p->tok, "the module has no .target directive");
+
+   return true;
 }
 
 struct ptx_module *

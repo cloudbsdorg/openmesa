@@ -19,8 +19,12 @@ NVRM_SRC =
 # open-gpu-kernel-modules headers for libnvrm; empty lets libnvrm pick.
 OGKM =
 # LLVM 19 llvm-config to build with; empty means /usr/local/bin/llvm-config19.
-# The value is exported to the environment, never written into the recipe:
-# a value that is not a path is refused by make.sh.
+# The value travels in the environment and is never written into a recipe:
+# a value that holds a quote or a shell word is never read as shell source,
+# and make.sh refuses a value that is not a path.  Set it in the
+# environment (LLVM_CONFIG=... make build) and it reaches make.sh exactly as
+# it was written; a value given to make as a variable is expanded by make
+# itself, which GNU make and bmake do differently.
 LLVM_CONFIG ?=
 # Where the build goes; empty means ./cloudbsd-build in this checkout.
 WORK =
@@ -33,9 +37,10 @@ DRIVER = sh cloudbsd/make.sh
 DRIVER_ENV = MK_NVRM_SRC="$(NVRM_SRC)" MK_OGKM="$(OGKM)" MK_WORK="$(WORK)" MK_JOBS="$(JOBS)" MK_YES="$(YES)" MK_ASSUME_YES="$(ASSUME_YES)" MK_JSON="$(JSON)" MK_PURPOSE="$(REPO_PURPOSE)"
 
 # The llvm-config travels in the environment: a value that holds a quote or
-# a shell word is never read as shell source by the recipe.  The export
-# carries a value, because bmake takes no bare "export variable".
-export LLVM_CONFIG = $(LLVM_CONFIG)
+# a shell word is never read as shell source by the recipe.  The value is
+# not exported here: make exports a variable that comes from the
+# environment or from the command line by itself, and an export that make
+# expands would change the value on its way.
 
 help:
 	@printf '%s\n' \

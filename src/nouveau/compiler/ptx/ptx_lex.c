@@ -208,7 +208,17 @@ lex_ident(struct ptx_lexer *lex, struct ptx_token *tok, struct ptx_diag *diag)
    return lex_set_text(tok, lex->text + start, lex->pos - start, diag);
 }
 
-/* Read a dotted word: a directive or a modifier. */
+/*
+ * Read a dotted word: a directive or a modifier.
+ *
+ * A modifier of PTX 8.x and 9.x may carry a scope, and the scope stays
+ * inside the word: "ld.global.L1::no_allocate", "cp.async.bulk.shared::cluster"
+ * and "mma.sync.aligned.kind::mxf4" are one word each, and the modifier is
+ * stored whole ("L1::no_allocate").  A "::" belongs to the word only when an
+ * identifier character follows it; a "::" that ends the word is named where
+ * it stands, so that "ld.global.L1:: b32" is refused and not read as a
+ * modifier and an operand.
+ */
 static bool
 lex_dotword(struct ptx_lexer *lex, struct ptx_token *tok, struct ptx_diag *diag)
 {
@@ -216,8 +226,22 @@ lex_dotword(struct ptx_lexer *lex, struct ptx_token *tok, struct ptx_diag *diag)
 
    lex_skip(lex, 1); /* the dot */
    /* Time: O(n) Space: O(1) */
-   while (lex->pos < lex->len && lex_is_ident_char(lex->text[lex->pos]))
-      lex_skip(lex, 1);
+   for (;;) {
+      while (lex->pos < lex->len && lex_is_ident_char(lex->text[lex->pos]))
+         lex_skip(lex, 1);
+
+      /* A scope operator inside the word. */
+      if (lex->pos + 1 >= lex->len || lex->text[lex->pos] != ':' ||
+          lex->text[lex->pos + 1] != ':')
+         break;
+      if (lex->pos + 2 >= lex->len ||
+          !lex_is_ident_char(lex->text[lex->pos + 2])) {
+         return lex_error(diag, lex->line, lex->col,
+                          "a '::' in a modifier must be followed by an "
+                          "identifier");
+      }
+      lex_skip(lex, 2);
+   }
 
    if (lex->pos == start + 1) {
       return lex_error(diag, tok->line, tok->col,
